@@ -188,12 +188,11 @@ class OpenRouterClient:
     ):
         self.api_key = api_key
         self.base_url = base_url
-        self.model = primary_model or "meta-llama/llama-4-scout-17b-16e-instruct:free"
+        self.model = primary_model or "nvidia/nemotron-3-8b-32k-instruct:free"
         self.fallback_models = fallback_models or [
-            "nvidia/nemotron-3-8b-32k-instruct:free",
             "google/gemma-3-27b-it:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
             "google/flint-8b:free",
+            "minimax/minimax-01:free",
         ]
 
     async def chat_completion(

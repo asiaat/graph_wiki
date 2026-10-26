@@ -9,13 +9,10 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
-    # Newer models: Llama 4 Scout (free) + fallback chain to Flint and other free models
-    jev_primary_model: str = "meta-llama/llama-4-scout-17b-16e-instruct:free"
+    # OpenRouter free models: Nemotron, Gemma4, Flint, MiniMax (no Llama)
+    jev_primary_model: str = "nvidia/nemotron-3-8b-32k-instruct:free"
     jev_fallback_models: str = (
-        "nvidia/nemotron-3-8b-32k-instruct:free,"
-        "google/gemma-3-27b-it:free,"
-        "meta-llama/llama-3.3-70b-instruct:free,"
-        "google/flint-8b:free"
+        "google/gemma-3-27b-it:free,google/flint-8b:free,minimax/minimax-01:free"
     )
     jev_nli_model: str = "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli"
     jev_embedding_model: str = "BAAI/bge-m3"
