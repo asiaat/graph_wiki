@@ -1,0 +1,68 @@
+# Hybrid Warfare Analysis Domain Pack
+# Defines entity types, edge topologies, Lande stopwords, and OSINT templates
+version: "1.0"
+domain: "hybrid_warfare"
+
+# Lande stopword filters
+lande_stopwords:
+  - "the"
+  - "a"
+  - "an"
+  - "and"
+  - "or"
+  - "but"
+  - "in"
+  - "on"
+  - "at"
+  - "to"
+  - "for"
+  - "of"
+  - "with"
+  - "by"
+  - "from"
+  - "as"
+  - "is"
+  - "are"
+  - "was"
+  - "were"
+  - "be"
+  - "been"
+  - "being"
+
+# Entity types allowed in this domain
+entity_types:
+  - NarrativeFrame
+  - MediaOutlet
+  - BotNetwork
+  - GeopoliticalEvent
+  - Actor
+  - Person
+  - Organization
+  - Location
+
+# Edge topology constraints
+edge_types:
+  - AMPLIFIES_NARRATIVE
+  - REPRINTS_FROM
+  - EXPLOITS_BIAS
+  - ATTRIBUTED_TO
+  - FUNDS
+  - AFFILIATED_WITH
+
+# OSINT search templates for this domain
+osint_templates:
+  - name: "telegram_channel_search"
+    query: '"{entity_name}" site:t.me'
+    description: "Search Telegram channels for narrative amplification"
+  - name: "media_cascade"
+    query: '"{entity_name}" news {date_range}'
+    description: "Track media reprint cascades"
+  - name: "bot_network"
+    query: '"{entity_name}" bot detection {domain}'
+    description: "Identify bot network amplification"
+
+# Attack-Index thresholds
+attack_index:
+  wave_threshold_sigma: 2.5
+  reprint_threshold: 0.85
+  emotional_intensity_threshold: 0.6

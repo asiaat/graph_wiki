@@ -1,0 +1,63 @@
+# Corporate OSINT Domain Pack
+version: "1.0"
+domain: "corporate_osint"
+
+lande_stopwords:
+  - "the"
+  - "a"
+  - "an"
+  - "and"
+  - "or"
+  - "but"
+  - "in"
+  - "on"
+  - "at"
+  - "to"
+  - "for"
+  - "of"
+  - "with"
+  - "by"
+  - "from"
+  - "as"
+  - "is"
+  - "are"
+  - "was"
+  - "were"
+  - "be"
+  - "been"
+  - "being"
+
+entity_types:
+  - Company
+  - BeneficialOwner
+  - OffshoreEntity
+  - Litigation
+  - WalletAddress
+  - Person
+  - Organization
+  - Location
+  - FinancialIdentifier
+
+edge_types:
+  - OWNS_SHARE
+  - SHARES_DIRECTOR_WITH
+  - REGISTERED_AT
+  - TRANSACTED_WITH
+  - OWNS_CONTROLS
+  - FUNDS
+
+osint_templates:
+  - name: "shell_company_cluster"
+    query: '"{entity_name}" shell company offshore'
+    description: "Identify shell company clusters"
+  - name: "beneficial_ownership"
+    query: '"{entity_name}" beneficial owner registry'
+    description: "Unroll beneficial ownership chains"
+  - name: "blockchain_tracking"
+    query: '"{entity_name}" blockchain transaction'
+    description: "Track crypto transactions"
+
+attack_index:
+  wave_threshold_sigma: 2.5
+  reprint_threshold: 0.85
+  emotional_intensity_threshold: 0.6

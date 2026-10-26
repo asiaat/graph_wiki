@@ -1,0 +1,62 @@
+# Drone Industry Supply Chain Domain Pack
+version: "1.0"
+domain: "drone_supply_chain"
+
+lande_stopwords:
+  - "the"
+  - "a"
+  - "an"
+  - "and"
+  - "or"
+  - "but"
+  - "in"
+  - "on"
+  - "at"
+  - "to"
+  - "for"
+  - "of"
+  - "with"
+  - "by"
+  - "from"
+  - "as"
+  - "is"
+  - "are"
+  - "was"
+  - "were"
+  - "be"
+  - "been"
+  - "being"
+
+entity_types:
+  - UAVModel
+  - SubComponent
+  - Manufacturer
+  - Distributor
+  - CustomsHSCode
+  - Organization
+  - Person
+  - Location
+
+edge_types:
+  - CONTAINS_PART
+  - MANUFACTURED_BY
+  - TRANSITED_THROUGH
+  - SANCTIONED_BY
+  - SUPPLIES_COMPONENT
+  - OWNS_CONTROLS
+
+osint_templates:
+  - name: "customs_database"
+    query: '"{entity_name}" customs shipment {hs_code}'
+    description: "Search customs databases for component shipments"
+  - name: "sanctions_lookup"
+    query: '"{entity_name}" sanctions list OFAC'
+    description: "Check OFAC sanctions lists"
+  - name: "aviation_registry"
+    query: '"{entity_name}" aircraft registration'
+    description: "Search aviation registries for drone registrations"
+
+attack_index:
+  wave_threshold_sigma: 2.5
+  reprint_threshold: 0.85
+  emotional_intensity_threshold: 0.6

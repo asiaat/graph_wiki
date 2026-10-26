@@ -1,0 +1,94 @@
+version: "3.9"
+
+services:
+  # 1. Python Backend + Embedded KùzuDB + JEV Classifiers
+  kuzuwiki-backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: kuzuwiki-backend
+    restart: unless-stopped
+    environment:
+      - KUZU_DB_PATH=/data/kuzudb
+      - WIKI_VAULT_PATH=/data/wiki
+      - RAW_VAULT_PATH=/data/raw_vault
+      - REDIS_URL=redis://redis:6379/0
+      - SEARXNG_URL=http://searxng:8080
+    env_file:
+      - backend/.env
+    volumes:
+      - kuzu_data:/data/kuzudb
+      - wiki_vault:/data/wiki
+      - raw_vault:/data/raw_vault
+      - ./config/domain_schemas:/config/domain_schemas:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+      - searxng
+
+  # 2. Background Worker (Compile, Lint, OSINT Complication Loop)
+  kuzuwiki-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: kuzuwiki-worker
+    command: celery -A app.agents.worker worker --beat --loglevel=info --concurrency=2
+    restart: unless-stopped
+    environment:
+      - KUZU_DB_PATH=/data/kuzudb
+      - WIKI_VAULT_PATH=/data/wiki
+      - RAW_VAULT_PATH=/data/raw_vault
+      - REDIS_URL=redis://redis:6379/0
+      - SEARXNG_URL=http://searxng:8080
+    env_file:
+      - backend/.env
+    volumes:
+      - kuzu_data:/data/kuzudb
+      - wiki_vault:/data/wiki
+      - raw_vault:/data/raw_vault
+      - ./config/domain_schemas:/config/domain_schemas:ro
+    depends_on:
+      - kuzuwiki-backend
+      - redis
+
+  # 3. TypeScript + React + Tailwind OSINT Workbench UI
+  kuzuwiki-frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL=http://localhost:8000/api/v1
+        VITE_WS_URL=ws://localhost:8000/ws
+    container_name: kuzuwiki-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - kuzuwiki-backend
+
+  # 4. Private SearXNG Instance for Autonomous OSINT
+  searxng:
+    image: searxng/searxng:latest
+    container_name: kuzuwiki-searxng
+    restart: unless-stopped
+    volumes:
+      - ./config/searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+    ports:
+      - "8088:8080"
+
+  # 5. Redis Broker for Swarm Task Queue & WebSocket Pub/Sub
+  redis:
+    image: redis:7.4-alpine
+    container_name: kuzuwiki-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+volumes:
+  kuzu_data:
+  wiki_vault:
+  raw_vault:
+  redis_data:

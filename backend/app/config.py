@@ -1,0 +1,38 @@
+"""Pydantic Settings configuration for KuzuWiki-OSINT backend."""
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
+    # Newer models: Llama 4 Scout (free) + fallback chain to Flint and other free models
+    jev_primary_model: str = "meta-llama/llama-4-scout-17b-16e-instruct:free"
+    jev_fallback_models: str = (
+        "nvidia/nemotron-3-8b-32k-instruct:free,"
+        "google/gemma-3-27b-it:free,"
+        "meta-llama/llama-3.3-70b-instruct:free,"
+        "google/flint-8b:free"
+    )
+    jev_nli_model: str = "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli"
+    jev_embedding_model: str = "BAAI/bge-m3"
+
+    kuzu_db_path: str = "/data/kuzudb"
+    wiki_vault_path: str = "/data/wiki"
+    raw_vault_path: str = "/data/raw_vault"
+
+    redis_url: str = "redis://localhost:6379/0"
+    searxng_url: str = "http://localhost:8080"
+
+    host: str = "0.0.0.0"
+    port: int = 8000
+
+    @property
+    def fallback_models_list(self) -> list[str]:
+        return [f.strip() for f in self.jev_fallback_models.split(",") if f.strip()]
+
+
+settings = Settings()
