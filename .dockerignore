@@ -1,0 +1,26 @@
+# Build context hygiene: keep secrets, data and dependency trees out of the
+# Docker build context.
+.git
+.gitignore
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+
+# Secrets: backend/.env must never be baked into an image layer.
+backend/.env
+.env
+.env.*
+!.env.example
+
+# Runtime data volumes (mounted, never copied).
+data/
+
+# Local scratch
+*.log
+.DS_Store
+.idea
+.vscode

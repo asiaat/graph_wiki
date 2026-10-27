@@ -84,20 +84,41 @@ Every document distillation and graph mutation is governed by **Type-Safe JEV Mo
 
 ## API Endpoints
 
+All routes are served by the FastAPI backend on port `8000`. The set below is
+the **as-built** contract; `GET /openapi.json` is always authoritative.
+
 ### Ingest
-- `POST /api/v1/ingest/document` — Upload PDF/DOCX/URL/Archive
+- `POST /api/v1/ingest/document` — Upload PDF/DOCX/TXT/HTML or fetch a URL; runs
+  Gatekeeper → Lande HVG → JEV Swarm → Graph-Wiki Compiler
+- `GET /api/v1/ingest/documents` — Index of the immutable raw vault
 
-### Query
-- `POST /api/v1/query/compiled` — Hybrid GraphRAG (vector + Cypher + BM25)
+### Graph
+- `GET /api/v1/graph/entities` — Compiled entity list (ontology picker)
+- `GET /api/v1/graph/entities/count` — Compiled entity count
+- `GET /api/v1/graph/entity/{entity_id}` — One entity with its relations
+- `POST /api/v1/graph/subgraph` — k-hop neighbourhood for the graph canvas
+- `POST /api/v1/graph/shortest-path` — Bounded shortest path between two entities
+- `POST /api/v1/graph/clusters` — Connected communities of the relation graph
+- `GET /api/v1/graph/terms` — The Lande term hierarchy (`DomainTerm` + `TERM_DOMINATES`)
 
-### OSINT
-- `POST /api/v1/osint/complicate/{entity_id}` — Trigger autonomous web expansion
+### Wiki
+- `GET /api/v1/wiki/{slug}` — A compiled dossier by slug
+- `GET /api/v1/wiki/entity/{entity_id}` — The dossier of an entity, resolved via its slug
+- `PUT /api/v1/wiki/{slug}` — File an analyst synthesis into the vault (and the graph)
 
-### Analytics
-- `GET /api/v1/analytics/attack-index` — InfoStream/Attack-Index time-series
+### OSINT & Lint
+- `POST /api/v1/osint/complicate/{entity_id}` — Dispatch the OSINT Complicator Agent
+- `GET /api/v1/osint/attack-index` — InfoStream / Attack-Index time series
+- `GET /api/v1/osint/lint/contradictions` — Contradiction, decay, wave and gap report
+- `GET /api/v1/osint/tickets` — Open OSINT complication tickets
+- `POST /api/v1/osint/tickets/review` — Swarm Mentor decision (approve/reject/defer)
 
-### Lint
-- `GET /api/v1/lint/contradictions` — Contradiction alerts for human review
+### System
+- `GET /health` — Liveness probe
+
+**Not yet implemented** (specified in `PRD.md`, see `ARCHIT.md` §12):
+`POST /api/v1/query/compiled` (hybrid GraphRAG) and the `WS /ws` live-graph
+WebSocket endpoint.
 
 ## User Interface
 
@@ -136,30 +157,44 @@ cd graph_wiki
 # Install dependencies
 pip install -e backend
 
-# Set OpenRouter API key in backend/.env
-# Create config/searxng directory with your SearXNG config
+# Configure the environment
+cp backend/.env.example backend/.env
+# set OPENROUTER_API_KEY, then adjust the local paths:
+#   KUZU_DB_PATH=./data/kuzudb/graph.kuzu   (KùzuDB needs a FILE path)
+#   WIKI_VAULT_PATH=./data/wiki
+#   RAW_VAULT_PATH=./data/raw_vault
 
-# Start the system
+# Start the stack (backend + workbench UI)
+docker compose up --build
 
-docker-compose up --build
-
-# Or run backend locally (if dependencies are installed)
-cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-# Start frontend
-cd frontend
-npm install
-npm run dev
+# Access the workbench at http://localhost:3000
 ```
 
-## Getting Started
+### Running the backend directly
 
-1. Clone the repository
-2. Set up OpenRouter API key (see .env)
-3. Configure SearXNG if running outside Docker
-4. Run `docker-compose up --build`
-5. Access the workbench at `http://localhost:3000`
+```bash
+cd backend
+uvicorn kuzuwiki.main:app --reload --port 8000
+```
+
+### Running the frontend directly
+
+```bash
+cd frontend
+npm install
+npm run dev      # http://localhost:5173, proxies /api to :8000
+```
+
+### Tests
+
+```bash
+cd backend && python -m pytest     # 90+ tests, no API key required
+cd frontend && npm run typecheck
+```
+
+The backend test suite mocks the LLM, so it runs fully offline and
+deterministically. The KùzuDB layer, the entailment gate, the domain packs and
+the API contract are all covered.
 
 ## Key Features
 

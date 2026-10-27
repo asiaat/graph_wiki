@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,38 +7,23 @@ name = "kuzuwiki-osint"
 version = "0.1.0"
 description = "KuzuWiki-OSINT: Graph-Compiled Expert Intelligence & Anti-Slop Knowledge System"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
-    "kuzudb>=0.1.0",
+    "kuzu>=0.11.0",
+    "python-multipart>=0.0.9",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
-    "instructor>=0.6.0",
-    "langgraph>=0.0.20",
-    "langchain>=0.1.0",
-    "langchain-openai>=0.0.5",
-    "celery>=5.3.0",
-    "redis>=5.0.0",
     "httpx>=0.27.0",
-    "requests>=2.31.0",
     "numpy>=1.26.0",
-    "scikit-learn>=1.3.0",
-    "rank_bm25>=2.2.0",
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",
     "PyYAML>=6.0.0",
-    "python-magic>=0.4.27",
     "pypdf>=4.0.0",
-    "docx>=0.12.0",
-    "minhash>=0.1.0",
+    "python-docx>=1.1.0",
     "scipy>=1.11.0",
-    "transformers>=4.36.0",
-    "torch>=2.2.0",
-    "sentence-transformers>=2.2.0",
-    "bge-m3>=0.0.1",
-    "websockets>=12.0.0",
-    "psutil>=5.9.0",
+    "scikit-learn>=1.3.0",
 ]
 
 [project.optional-dependencies]
@@ -51,15 +36,17 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["app"]
-
-[tool.hatch.build.targets.wheel.sources]
-"backend/app" = "app"
+packages = ["kuzuwiki"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501", "B008"]

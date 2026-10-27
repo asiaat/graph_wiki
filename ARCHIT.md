@@ -364,3 +364,56 @@ volumes:
 Because **KùzuDB** is an embedded database that supports **multiple concurrent `READ_ONLY` connections or a single `READ_WRITE` connection** per database directory:
 * The **FastAPI process (`kuzuwiki-backend`)** owns the single `READ_WRITE` KùzuDB connection pool via an asynchronous write-queue actor (`asyncio.Queue`) that serializes graph mutations (`MERGE` nodes/edges) in sub-millisecond batches while serving concurrent Cypher read queries.
 * The **Background Worker (`kuzuwiki-worker`)** performs heavy CPU/GPU tasks (PDF OCR, Lande HVG computation, JEV Swarm LLM calls, DeBERTa NLI verification, SearXNG scraping) and commits validated `JEVDistillationBundle` payloads to the backend's internal `/internal/v1/kuzu/commit` endpoint, preventing file-lock contention on `/data/kuzudb`.
+---
+
+## 12. As-Built Status (what the code actually does)
+
+This section records the **as-built** reality, which differs from the design
+above in a handful of deliberate ways. The design documents remain the target;
+this is the current state.
+
+### 12.1 Corrections to the design
+
+| Design assumption | As-built | Why |
+| :--- | :--- | :--- |
+| `kuzudb` Python package, `KuzuDB.get_instance()`, `cypher_query()`, `commit()` | `kuzu` ≥ 0.11, `kuzu.Database(path)`, `kuzu.Connection(db)`, `conn.execute(query, params)` | `kuzudb` does not exist on PyPI; the previously used API was fictional. |
+| Scalar `CREATE INDEX ... USING HNSW` | `CALL create_vector_index(table, idx, column)` / `CALL create_fts_index(table, idx, cols)` | Kùzu 0.11 has no standalone `CREATE INDEX`. The FTS index *is* real BM25 (`query_fts_index`). |
+| `shortestPath()`, `algo.louvain.stream`, `LIMIT` inside `CALL {}` | BFS over the neighbourhood; connected components; `LIMIT` only at query level | None of those Neo4j constructs exist in the Kùzu dialect. |
+| `KUZU_DB_PATH=/data/kuzudb` | `KUZU_DB_PATH=/data/kuzudb/graph.kuzu` | Kùzu refuses to open a **directory**; the path must name a file. |
+| `asyncio.Queue` write actor with fire-and-forget writes | single dedicated executor thread; every write is awaited | Unawaited writes were silently dropped. |
+| NLI gate scoring the quote against the entity names | deterministic lexical entailment over statement-vs-quote, behind a pluggable `NLIClient` | The old scorer returned 0.0 for every realistic quote, rejecting 100% of relations. The DeBERTa backend can be dropped in behind the same interface. |
+| Docker: `pip install -e .` before copying sources; `.env` baked in; `npm ci` without a lockfile | sources copied first; `.env` excluded by `.dockerignore`; `npm install` fallback | The image "built green" while installing nothing, and leaked the live API key into a layer. |
+
+### 12.2 Implemented end-to-end
+
+* **Ingest → compile → dossier**: document → SHA-256 archive → slop score →
+  Admiralty grade → Lande HVG → three-expert swarm → weighted consensus →
+  entailment gate → KùzuDB upsert (`Entity`, `Claim`, `DomainTerm`,
+  `SourceDoc`) with `EVIDENCED_BY` provenance edges → Git-versioned Markdown
+  dossier with YAML frontmatter and `[[wikilinks]]`.
+* **Reprint cascade**: MinHash shingles over the archived text, `REPRINTS_FROM`
+  edges with the publication lag, and no corroboration credit for reprints.
+* **Adversarial lint**: contradiction detection (writing `[:CONTRADICTS]`
+  edges), persisted Ebbinghaus decay, Attack-Index wave anomalies, and
+  `ComplicationTicket`s for structural gaps.
+
+### 12.3 Specified but not implemented
+
+* `POST /api/v1/query/compiled` — hybrid GraphRAG over the compiled graph.
+* `WS /ws` — live graph mutation stream (the frontend hook degrades to a
+  no-op and reports `connected: false`).
+* Celery worker (`backend/app/agents/worker.py`) and beat schedule.
+* SearXNG deployment (the agent can use an external instance via
+  `SEARXNG_URL`, but no configuration ships with the repo).
+* Entity embeddings (the `Entity.embedding` column and its HNSW index exist;
+  nothing writes vectors yet, so the vector path of entity resolution is
+  inert until an embedding model is configured).
+* `DerivedSynthesis` filing from analyst queries is stored, but the
+  `PUT /api/v1/wiki/{slug}` route returns a payload the frontend does not yet
+  send as JSON.
+
+### 12.4 Package layout
+
+The Python package is `backend/kuzuwiki/` (imported as `kuzuwiki.*`), not
+`backend/app/`. `app` was a namespace package and could be shadowed by an
+unrelated `app` package elsewhere on `sys.path`.

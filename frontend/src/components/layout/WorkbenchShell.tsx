@@ -1,11 +1,13 @@
-import React from "react";
-import { ResizablePanelGroup, ResizablePanel, Separator } from "react-resizable-panels";
+import React, { useState } from "react";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import LeftPane from "./LeftPane";
 import CenterPane from "./CenterPane";
 import RightPane from "./RightPane";
 import BottomDock from "./BottomDock";
 
 export default function WorkbenchShell() {
+  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between">
@@ -15,26 +17,28 @@ export default function WorkbenchShell() {
         </div>
       </header>
 
-      <ResizablePanelGroup direction="horizontal" className="flex-1 overflow-hidden">
-        <ResizablePanel defaultSize={20} minSize={15}>
-          <LeftPane />
-        </ResizablePanel>
+      <Group orientation="horizontal" className="flex-1 overflow-hidden">
+        <Panel defaultSize={20} minSize={15}>
+          <LeftPane
+            selectedEntityId={selectedEntityId}
+            onSelectEntity={setSelectedEntityId}
+          />
+        </Panel>
         <Separator />
-        <ResizablePanel defaultSize={45} minSize={30}>
-          <CenterPane />
-        </ResizablePanel>
+        <Panel defaultSize={45} minSize={30}>
+          <CenterPane entityId={selectedEntityId} />
+        </Panel>
         <Separator />
-        <ResizablePanel defaultSize={25} minSize={20}>
-          <RightPane />
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        <Panel defaultSize={25} minSize={20}>
+          <RightPane entityId={selectedEntityId} />
+        </Panel>
+      </Group>
 
-      <ResizablePanelGroup direction="vertical">
-        <Separator />
-        <ResizablePanel defaultSize={20} minSize={10}>
+      <Group orientation="vertical" className="h-64 shrink-0">
+        <Panel defaultSize={70} minSize={30}>
           <BottomDock />
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        </Panel>
+      </Group>
     </div>
   );
 }

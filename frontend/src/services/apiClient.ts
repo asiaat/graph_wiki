@@ -9,9 +9,13 @@ export const apiClient: AxiosInstance = axios.create({
 });
 
 export const ingestApi = {
-  document: (formData: FormData) => apiClient.post("/ingest/document", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
-  }),
+  // Ingest runs the three-expert swarm, which can take minutes on a free
+  // model tier, so it gets its own generous timeout.
+  document: (formData: FormData) =>
+    apiClient.post("/ingest/document", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 600000,
+    }),
 };
 
 export const graphApi = {

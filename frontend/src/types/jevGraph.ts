@@ -106,16 +106,73 @@ export interface GraphEdge {
   is_disputed?: boolean;
 }
 
+export interface SubgraphEntity {
+  id: string;
+  canonical_name: string;
+  category?: string;
+  confidence?: number;
+}
+
 export interface SubgraphResponse {
-  paths: any[];
+  entities: SubgraphEntity[];
+  edges: GraphEdge[];
+}
+
+export interface WikiPage {
+  slug: string;
+  content: string;
+  frontmatter: Record<string, unknown>;
 }
 
 export interface AttackIndexTimeSeries {
   days: number;
+  topic?: string | null;
   time_series: {
     date: string;
     avg_attack_index: number;
     doc_count: number;
     terms: string[];
   }[];
+}
+
+export interface ContradictionAlert {
+  entity_id?: string;
+  entity_name?: string;
+  claim_a?: string;
+  claim_b?: string;
+  statement_a?: string;
+  statement_b?: string;
+  severity?: number;
+  detected_at?: string;
+}
+
+export interface LintReport {
+  contradictions: ContradictionAlert[];
+  decay_issues: {
+    claim_id: string;
+    old_confidence: number;
+    new_confidence: number;
+    delta_days: number;
+  }[];
+  wave_alerts: {
+    timestamp?: string;
+    term?: string;
+    z_score: number;
+    attack_index: number;
+  }[];
+  structural_gaps: {
+    entity_id: string;
+    canonical_name: string;
+    category?: string;
+    gap_type: string;
+  }[];
+  timestamp: string;
+}
+
+export interface EntityCounts {
+  total: number;
+}
+
+export interface DocumentCounts {
+  count: number;
 }

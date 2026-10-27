@@ -66,6 +66,7 @@ coverage.xml
 # TypeScript / React / Frontend
 # =============================================================================
 node_modules/
+*.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -87,6 +88,9 @@ build/
 .env.production
 .env.staging
 .env.development
+backend/.env
+backend/.env.*
+!backend/.env.example
 
 # =============================================================================
 # KùzuDB (Embedded Graph Database)

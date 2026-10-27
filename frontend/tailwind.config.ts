@@ -4,14 +4,13 @@ export default {
   theme: {
     extend: {
       colors: {
-        border: "hsl(var(--border))",
-        input: "hsl(var(--input))",
-        ring: "hsl(var(--ring))",
-        background: "hsl(var(--background))",
-        foreground: "hsl(var(--foreground))",
+        border: "hsl(var(--border, 214 32% 91%))",
+        input: "hsl(var(--input, 214 32% 91%))",
+        ring: "hsl(var(--ring, 221 83% 53%))",
+        background: "hsl(var(--background, 0 0% 100%))",
+        foreground: "hsl(var(--foreground, 222 47% 11%))",
       },
-      plugins: [],
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [],
 };
