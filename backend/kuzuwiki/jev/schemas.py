@@ -29,6 +29,27 @@ class EntityCategory(str, Enum):
     EVENT = "Event"
     LEGAL_DOCUMENT = "LegalDocument"
     FINANCIAL_IDENTIFIER = "FinancialIdentifier"
+    # --- Extensions required by open-source corpora (see osint_berlin26) ---
+    #: A messaging/forum channel (Telegram, Matrix, ...).
+    TELEGRAM_CHANNEL = "TelegramChannel"
+    #: A website or domain.
+    WEBSITE = "Website"
+    #: A phone number as an identifier.
+    PHONE_NUMBER = "PhoneNumber"
+    #: An email address as an identifier.
+    EMAIL_ADDRESS = "EmailAddress"
+    #: Physical or technical infrastructure (substations, hosting, depots).
+    INFRASTRUCTURE = "Infrastructure"
+    #: An informal or clandestine group without legal personality.
+    GROUP = "Group"
+    #: A political party or movement.
+    POLITICAL_PARTY = "PoliticalParty"
+    #: A commercial or industrial service provider.
+    SERVICE_PROVIDER = "ServiceProvider"
+    #: A risk marker or exploitation indicator.
+    RISK_INDICATOR = "RiskIndicator"
+    #: An occupation or job type.
+    JOB_TYPE = "JobType"
 
 
 class RelationType(str, Enum):
@@ -42,6 +63,69 @@ class RelationType(str, Enum):
     PARTICIPATED_IN = "PARTICIPATED_IN"
     SANCTIONED_UNDER = "SANCTIONED_UNDER"
     HIERARCHY_PARENT_OF = "HIERARCHY_PARENT_OF"
+    # --- Extensions required by open-source corpora (see osint_berlin26) ---
+    #: Physical or administrative location of an entity.
+    LOCATED_IN = "LOCATED_IN"
+    #: An entity operates from / out of another entity or place.
+    OPERATES_FROM = "OPERATES_FROM"
+    #: Recruitment or labour-channel linkage.
+    RECRUITS_FROM = "RECRUITS_FROM"
+    #: An entity was the target of an attack.
+    ATTACKED = "ATTACKED"
+    #: Direct communication or contact between entities.
+    COMMUNICATES_WITH = "COMMUNICATES_WITH"
+
+
+class SourceType(str, Enum):
+    """The kind of document being ingested.
+
+    The Admiralty classifier grades *sources*, so it needs to know what kind
+    of source it is looking at. An analyst assessment has no publisher and no
+    web domain, and rating it "cannot be judged" would be wrong.
+    """
+
+    WEB_ARTICLE = "web_article"
+    ANALYST_REPORT = "analyst_report"
+    OFFICIAL_RECORD = "official_record"
+    MEDIA = "media"
+    INTELLIGENCE = "intelligence"
+
+
+class Sensitivity(str, Enum):
+    """How freely a record may be shared.
+
+    ``SENSITIVE`` covers direct contact identifiers and risk markers;
+    ``RESTRICTED`` covers persons of interest and allegations about them.
+    """
+
+    PUBLIC = "public"
+    SENSITIVE = "sensitive"
+    RESTRICTED = "restricted"
+
+
+#: Categories whose records are contact data or risk markers by nature.
+SENSITIVE_CATEGORIES: frozenset[EntityCategory] = frozenset(
+    {
+        EntityCategory.PHONE_NUMBER,
+        EntityCategory.EMAIL_ADDRESS,
+        EntityCategory.TELEGRAM_CHANNEL,
+        EntityCategory.RISK_INDICATOR,
+    }
+)
+
+
+def default_sensitivity_for(category: EntityCategory) -> Sensitivity:
+    """Derive the default sharing restriction for an entity category.
+
+    Persons are marked sensitive rather than restricted: a named individual is
+    not itself a disclosure risk, but an allegation *about* one is, and the
+    importer can escalate a person of interest to ``RESTRICTED``.
+    """
+    if category in SENSITIVE_CATEGORIES:
+        return Sensitivity.SENSITIVE
+    if category == EntityCategory.PERSON:
+        return Sensitivity.SENSITIVE
+    return Sensitivity.PUBLIC
 
 
 class VerbatimSpan(BaseModel):
@@ -77,6 +161,8 @@ class JEVExtractedEntity(BaseModel):
     summary_fact: str = Field(..., min_length=1, max_length=4096)
     evidence: VerbatimSpan
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    #: Sharing restriction. Defaults are derived from the category when unset.
+    sensitivity: Sensitivity | None = None
 
 
 class JEVExtractedRelation(BaseModel):
@@ -89,6 +175,8 @@ class JEVExtractedRelation(BaseModel):
     swarm_consensus_count: int = Field(..., ge=1, le=5)
     evidence: VerbatimSpan
     weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    #: Sharing restriction for the claim itself.
+    sensitivity: Sensitivity | None = None
 
     @model_validator(mode="after")
     def validate_temporal(self):
@@ -148,3 +236,9 @@ class RawDocumentPayload(BaseModel):
     domain_mode: str | None = None
     #: Marks the document as an artifact kept for disinformation study.
     is_adversarial_artifact: bool = False
+    #: What kind of source this is. Drives the Admiralty rating.
+    source_type: SourceType = SourceType.WEB_ARTICLE
+    #: Which domain pack governs this document (see ``config/domain_schemas``).
+    analysis_domain: str | None = None
+    #: Sharing restriction for the document as a whole.
+    sensitivity: Sensitivity = Sensitivity.PUBLIC

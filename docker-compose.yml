@@ -1,8 +1,7 @@
 # Slim development stack: the backend (with its embedded KùzuDB) and the
-# workbench UI. Services that have no implementation yet - the Celery worker
-# (backend/app/agents/worker.py does not exist), SearXNG (no config shipped)
-# and Redis (no broker in the codebase) - are deliberately not declared, so
-# `docker compose up` starts a stack that actually works.
+# workbench UI. The Celery worker module exists, but Redis is not deployed and
+# the worker opens KùzuDB independently; keep it disabled until writes have a
+# single owner. SearXNG is external and configured through SEARXNG_URL.
 
 services:
   kuzuwiki-backend:
@@ -15,6 +14,8 @@ services:
       KUZU_DB_PATH: /data/kuzudb/graph.kuzu
       WIKI_VAULT_PATH: /data/wiki
       RAW_VAULT_PATH: /data/raw_vault
+      QUARANTINE_PATH: /data/quarantine
+      PROJECT_DATA_ROOT: /data/projects
       DOMAIN_SCHEMA_PATH: /config/domain_schemas
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
@@ -28,9 +29,13 @@ services:
       - ./data/wiki:/data/wiki
       - ./data/raw_vault:/data/raw_vault
       - ./data/quarantine:/data/quarantine
+      - ./data/projects:/data/projects
       - ./config/domain_schemas:/config/domain_schemas:ro
-    ports:
-      - "8000:8000"
+      # Source code mount for live development (edits without rebuild)
+      - ./backend/kuzuwiki:/app/kuzuwiki:rw
+    # Backend stays on the private Compose network. The frontend Nginx proxies
+    # /api and /ws internally; publishing this port on the host would collide
+    # with other VPS services and bypass that single entry point.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -50,7 +55,7 @@ services:
     container_name: kuzuwiki-frontend
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "127.0.0.1:3000:80"
     depends_on:
       kuzuwiki-backend:
         condition: service_healthy

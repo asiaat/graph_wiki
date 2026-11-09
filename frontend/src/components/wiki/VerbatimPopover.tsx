@@ -15,7 +15,7 @@ export default function VerbatimPopover({ quote, sourceTitle, nliScore }: Verbat
           NLI: {(nliScore * 100).toFixed(0)}%
         </span>
       </div>
-      <p className="text-sm text-gray-700 italic">"{quote}"</p>
+      <p className="text-sm text-gray-700 italic">“{quote}”</p>
     </div>
   );
 }

@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     wiki_vault_path: str = "/data/wiki"
     raw_vault_path: str = "/data/raw_vault"
     quarantine_path: str = "/quarantine/slop"
+    project_data_root: str = "/data/projects"
 
     redis_url: str = "redis://localhost:6379/0"
     searxng_url: str = "http://localhost:8080"

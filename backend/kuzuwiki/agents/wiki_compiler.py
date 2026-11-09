@@ -84,7 +84,23 @@ class GraphWikiCompilerAgent:
             for alias in resolved.aliases:
                 id_by_name.setdefault(alias.lower(), resolved.resolved_id)
 
-        for resolved in resolved_entities:
+            # Generate and persist embedding for new entities.
+            # The embedding enables vector search in entity resolution
+            # and the hybrid GraphRAG query path. KùzuDB's HNSW index on
+            # embedding requires non-null values, so we always provide a
+            # zero-vector when embeddings cannot be generated.
+            embedding: list[float] = [0.0] * 1024
+            if resolved.is_new:
+                from kuzuwiki.jev.embedding import embed_entity_summary
+
+                gen_embedding = embed_entity_summary(
+                    resolved.canonical_name,
+                    resolved.summary_fact,
+                    resolved.category,
+                )
+                if gen_embedding is not None and len(gen_embedding) == 1024:
+                    embedding = gen_embedding
+
             await self.wiki_sync.upsert_entity(
                 {
                     "id": resolved.resolved_id,
@@ -97,6 +113,8 @@ class GraphWikiCompilerAgent:
                     "confidence_score": resolved.confidence,
                     "lifecycle_state": self._lifecycle_state(resolved),
                     "hvg_centrality": 0.0,
+                    "sensitivity": resolved.sensitivity.value,
+                    "embedding": embedding,
                 }
             )
 

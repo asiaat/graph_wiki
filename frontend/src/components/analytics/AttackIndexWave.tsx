@@ -12,13 +12,20 @@ import {
 } from "recharts";
 import { useAttackIndex } from "../../hooks/useKuzuSubgraph";
 
-export default function AttackIndexWave() {
+interface AttackIndexWaveProps {
+  expanded?: boolean;
+}
+
+export default function AttackIndexWave({ expanded = false }: AttackIndexWaveProps) {
   const { data, isLoading, error } = useAttackIndex(30);
   const series = data?.time_series ?? [];
+  const chartHeight = expanded ? Math.max(window.innerHeight - 170, 400) : 180;
 
   return (
-    <div className="p-4">
-      <h3 className="font-semibold text-sm mb-2">Attack-Index Wave</h3>
+    <div className={expanded ? "p-6" : "p-4"}>
+      <h3 className={expanded ? "mb-2 text-xl font-semibold" : "mb-2 text-sm font-semibold"}>
+        Attack-Index Wave
+      </h3>
 
       {isLoading && <p className="text-xs text-gray-500">Loading time series...</p>}
       {error && <p className="text-xs text-red-600">Could not load the Attack-Index series.</p>}
@@ -29,8 +36,8 @@ export default function AttackIndexWave() {
       )}
 
       {series.length > 0 && (
-        <div className="grid grid-cols-2 gap-4">
-          <ResponsiveContainer width="100%" height={180}>
+        <div className={`grid grid-cols-1 gap-5 ${expanded ? "xl:grid-cols-2" : "grid-cols-2"}`}>
+          <ResponsiveContainer width="100%" height={chartHeight}>
             <LineChart data={series}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="date" tick={{ fontSize: 10 }} />
@@ -45,7 +52,7 @@ export default function AttackIndexWave() {
               />
             </LineChart>
           </ResponsiveContainer>
-          <ResponsiveContainer width="100%" height={180}>
+          <ResponsiveContainer width="100%" height={chartHeight}>
             <BarChart data={series}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="date" tick={{ fontSize: 10 }} />

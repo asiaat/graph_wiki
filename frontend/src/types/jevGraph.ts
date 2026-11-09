@@ -7,7 +7,17 @@ export type EntityCategory =
   | "NarrativeFrame"
   | "Event"
   | "LegalDocument"
-  | "FinancialIdentifier";
+  | "FinancialIdentifier"
+  | "TelegramChannel"
+  | "Website"
+  | "PhoneNumber"
+  | "EmailAddress"
+  | "Infrastructure"
+  | "Group"
+  | "PoliticalParty"
+  | "ServiceProvider"
+  | "RiskIndicator"
+  | "JobType";
 
 export type RelationType =
   | "OWNS_CONTROLS"
@@ -19,7 +29,15 @@ export type RelationType =
   | "CONTRADICTS_CLAIM"
   | "PARTICIPATED_IN"
   | "SANCTIONED_UNDER"
-  | "HIERARCHY_PARENT_OF";
+  | "HIERARCHY_PARENT_OF"
+  | "LOCATED_IN"
+  | "OPERATES_FROM"
+  | "RECRUITS_FROM"
+  | "ATTACKED"
+  | "COMMUNICATES_WITH";
+
+/** Sharing restriction carried by entities and claims. */
+export type Sensitivity = "public" | "sensitive" | "restricted";
 
 export type AdmiraltyReliability =
   | "A_COMPLETELY_RELIABLE"
@@ -85,6 +103,7 @@ export interface Entity {
   confidence_score?: number;
   lifecycle_state?: string;
   hvg_centrality?: number;
+  sensitivity?: Sensitivity;
   updated_at?: string;
 }
 
@@ -104,6 +123,15 @@ export interface GraphEdge {
   relation_type: string;
   weight?: number;
   is_disputed?: boolean;
+  claim_id?: string | null;
+  claim_statement?: string | null;
+  claim_confidence?: number | null;
+  entailment?: number | null;
+  evidence?: {
+    exact_quote: string;
+    source_sha256: string;
+    nli_score?: number | null;
+  }[];
 }
 
 export interface SubgraphEntity {
@@ -111,6 +139,8 @@ export interface SubgraphEntity {
   canonical_name: string;
   category?: string;
   confidence?: number;
+  summary?: string;
+  lifecycle_state?: string;
 }
 
 export interface SubgraphResponse {
@@ -174,5 +204,47 @@ export interface EntityCounts {
 }
 
 export interface DocumentCounts {
-  count: number;
+  count: number
+}
+
+/** Dashboard statistics from the /stats/dashboard backend endpoint. */
+export interface DashboardStats {
+  sources: {
+    total: number
+    admiralty_breakdown: Record<string, number>
+    quarantined: number
+  }
+  entities: {
+    total: number
+    by_category: Record<string, number>
+  }
+  claims: {
+    total: number
+    evidenced: number
+    confidence_distribution: {
+      high: number
+      medium: number
+      low: number
+    }
+  }
+  relations: {
+    relates_to: number
+    reprints: number
+  }
+  contradictions: {
+    count: number
+  }
+  osint: {
+    open_tickets: number
+    synth_concepts: number
+  }
+  quality_metrics: {
+    extraction_success_rate: number
+    average_nli_score: number
+    total_claims_with_nli: number
+  }
+  activity: {
+    recent_ingestions: string[]
+    last_update?: string
+  }
 }

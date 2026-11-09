@@ -45,9 +45,9 @@ class ClusterRequest(BaseModel):
 
 
 async def get_kuzu():
-    from kuzuwiki.main import app
+    from kuzuwiki.project_context import get_current_runtime
 
-    return app.state.kuzu
+    return (await get_current_runtime()).kuzu
 
 
 @router.post("/subgraph")
@@ -61,7 +61,8 @@ async def query_subgraph(req: SubgraphRequest) -> dict[str, Any]:
         MATCH (e:Entity {{id: $entity_id}})
         MATCH (n:Entity)-[:RELATES_TO*1..{hops}]-(e)
         RETURN n.id AS id, n.canonical_name AS canonical_name,
-               n.category AS category, n.confidence_score AS confidence
+               n.category AS category, n.summary AS summary,
+               n.confidence_score AS confidence, n.lifecycle_state AS lifecycle_state
         """,
         {"entity_id": req.entity_id},
     )
@@ -69,7 +70,8 @@ async def query_subgraph(req: SubgraphRequest) -> dict[str, Any]:
     root_rows = await kuzu.read(
         "MATCH (e:Entity {id: $entity_id}) "
         "RETURN e.id AS id, e.canonical_name AS canonical_name, "
-        "e.category AS category, e.confidence_score AS confidence",
+        "e.category AS category, e.summary AS summary, e.confidence_score AS confidence, "
+        "e.lifecycle_state AS lifecycle_state",
         {"entity_id": req.entity_id},
     )
     if not root_rows:
@@ -87,34 +89,148 @@ async def query_subgraph(req: SubgraphRequest) -> dict[str, Any]:
                 "id": entity_id,
                 "canonical_name": row.get("canonical_name"),
                 "category": row.get("category"),
+                "summary": row.get("summary"),
                 "confidence": row.get("confidence"),
+                "lifecycle_state": row.get("lifecycle_state"),
             }
         )
 
     if len(entities) > req.limit:
         entities = entities[: req.limit]
 
+    ids = [entity["id"] for entity in entities]
     edge_rows = await kuzu.read(
         """
         MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity)
+        WHERE a.id IN $ids AND b.id IN $ids
+        OPTIONAL MATCH (c:Claim {claim_id: r.claim_id})
+        OPTIONAL MATCH (c)-[ev:EVIDENCED_BY]->(s:SourceDoc)
         RETURN a.id AS source, b.id AS target, r.relation_type AS relation_type,
-               r.weight AS weight, r.is_disputed AS is_disputed
-        """
+               r.weight AS weight, r.is_disputed AS is_disputed,
+               r.claim_id AS claim_id, c.statement AS claim_statement,
+               c.confidence AS claim_confidence, c.nli_entailment AS entailment,
+               ev.exact_quote AS exact_quote, ev.nli_score AS evidence_nli,
+               s.sha256 AS source_sha256
+        """,
+        {"ids": ids},
     )
-    ids = {e["id"] for e in entities}
-    edges = [
-        {
-            "source": row["source"],
-            "target": row["target"],
-            "relation_type": row.get("relation_type"),
-            "weight": row.get("weight"),
-            "is_disputed": row.get("is_disputed"),
-        }
-        for row in edge_rows
-        if row.get("source") in ids and row.get("target") in ids
-    ]
+    contradiction_rows = await kuzu.read(
+        "MATCH (a:Claim)-[:CONTRADICTS]->(b:Claim) "
+        "RETURN a.claim_id AS claim_a, b.claim_id AS claim_b"
+    )
+    contradicted_claim_ids = {
+        claim_id
+        for row in contradiction_rows
+        for claim_id in (row.get("claim_a"), row.get("claim_b"))
+        if claim_id
+    }
+    edge_map: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in edge_rows:
+        key = (row.get("source", ""), row.get("target", ""), row.get("relation_type", ""))
+        if not all(key):
+            continue
+        edge = edge_map.setdefault(
+            key,
+            {
+                "source": key[0],
+                "target": key[1],
+                "relation_type": key[2],
+                "weight": row.get("weight"),
+                "is_disputed": row.get("is_disputed"),
+                "claim_id": row.get("claim_id"),
+                "claim_statement": row.get("claim_statement"),
+                "claim_confidence": row.get("claim_confidence"),
+                "entailment": row.get("entailment"),
+                "evidence": [],
+            },
+        )
+        if row.get("exact_quote") and row.get("source_sha256"):
+            evidence = {
+                "exact_quote": row["exact_quote"],
+                "source_sha256": row["source_sha256"],
+                "nli_score": row.get("evidence_nli"),
+            }
+            if evidence not in edge["evidence"]:
+                edge["evidence"].append(evidence)
+        if row.get("claim_id") in contradicted_claim_ids:
+            edge["is_disputed"] = True
+
+    edges = list(edge_map.values())
 
     return {"entities": entities, "edges": edges}
+
+
+@router.get("/wiki-map")
+async def query_wiki_map(limit: int = 250) -> dict[str, Any]:
+    """Return the whole compiled wiki as dossiers connected by graph relations."""
+    kuzu = await get_kuzu()
+    safe_limit = max(1, min(int(limit), 1000))
+    entity_rows = await kuzu.read(
+        "MATCH (e:Entity) "
+        "RETURN e.id AS id, e.canonical_name AS canonical_name, "
+        "e.category AS category, e.summary AS summary, "
+        "e.confidence_score AS confidence, e.lifecycle_state AS lifecycle_state "
+        "ORDER BY canonical_name LIMIT $limit",
+        {"limit": safe_limit},
+    )
+    entities = [
+        {
+            "id": row["id"],
+            "canonical_name": row.get("canonical_name"),
+            "category": row.get("category"),
+            "summary": row.get("summary"),
+            "confidence": row.get("confidence"),
+            "lifecycle_state": row.get("lifecycle_state"),
+        }
+        for row in entity_rows
+    ]
+    ids = [entity["id"] for entity in entities]
+    if not ids:
+        return {"entities": [], "edges": []}
+
+    edge_rows = await kuzu.read(
+        "MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity) "
+        "WHERE a.id IN $ids AND b.id IN $ids "
+        "OPTIONAL MATCH (c:Claim {claim_id: r.claim_id}) "
+        "OPTIONAL MATCH (c)-[ev:EVIDENCED_BY]->(s:SourceDoc) "
+        "RETURN a.id AS source, b.id AS target, r.relation_type AS relation_type, "
+        "r.weight AS weight, r.is_disputed AS is_disputed, "
+        "r.claim_id AS claim_id, c.statement AS claim_statement, "
+        "c.confidence AS claim_confidence, c.nli_entailment AS entailment, "
+        "ev.exact_quote AS exact_quote, ev.nli_score AS evidence_nli, "
+        "s.sha256 AS source_sha256",
+        {"ids": ids},
+    )
+    edge_map: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in edge_rows:
+        key = (row.get("source", ""), row.get("target", ""), row.get("relation_type", ""))
+        if not all(key):
+            continue
+        edge = edge_map.setdefault(
+            key,
+            {
+                "source": key[0],
+                "target": key[1],
+                "relation_type": key[2],
+                "weight": row.get("weight"),
+                "is_disputed": row.get("is_disputed"),
+                "claim_id": row.get("claim_id"),
+                "claim_statement": row.get("claim_statement"),
+                "claim_confidence": row.get("claim_confidence"),
+                "entailment": row.get("entailment"),
+                "evidence": [],
+            },
+        )
+        if row.get("exact_quote") and row.get("source_sha256"):
+            evidence = {
+                "exact_quote": row["exact_quote"],
+                "source_sha256": row["source_sha256"],
+                "nli_score": row.get("evidence_nli"),
+            }
+            if evidence not in edge["evidence"]:
+                edge["evidence"].append(evidence)
+
+    return {"entities": entities, "edges": list(edge_map.values())}
 
 
 @router.post("/shortest-path")
@@ -264,8 +380,7 @@ async def list_entities(limit: int = 100, category: str | None = None) -> dict[s
             "MATCH (e:Entity) WHERE e.category = $category "
             "RETURN e.id AS id, e.canonical_name AS canonical_name, "
             "e.category AS category, e.confidence_score AS confidence, "
-            "e.lifecycle_state AS lifecycle_state "
-            "ORDER BY e.canonical_name LIMIT $limit",
+            "e.lifecycle_state AS lifecycle_state ORDER BY canonical_name LIMIT $limit",
             {"category": category, "limit": limit},
         )
     else:
@@ -273,10 +388,19 @@ async def list_entities(limit: int = 100, category: str | None = None) -> dict[s
             "MATCH (e:Entity) "
             "RETURN e.id AS id, e.canonical_name AS canonical_name, "
             "e.category AS category, e.confidence_score AS confidence, "
-            "e.lifecycle_state AS lifecycle_state "
-            "ORDER BY e.canonical_name LIMIT $limit",
+            "e.lifecycle_state AS lifecycle_state ORDER BY canonical_name LIMIT $limit",
             {"limit": limit},
         )
+
+    relation_rows = await kuzu.read(
+        "MATCH (e:Entity)-[r:RELATES_TO]-() "
+        "RETURN e.id AS id, count(r) AS relation_count",
+        {},
+    )
+    relation_counts = {row["id"]: int(row["relation_count"]) for row in relation_rows}
+    for row in rows:
+        row["relation_count"] = relation_counts.get(row["id"], 0)
+    rows.sort(key=lambda row: (-row["relation_count"], row["canonical_name"].casefold()))
     return {"entities": rows, "count": len(rows)}
 
 

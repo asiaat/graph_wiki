@@ -28,8 +28,10 @@ ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 # hatchling separately shadows it and breaks the editable metadata hook.
 RUN pip install --no-cache-dir -e .
 
-# Mount points for the compiled graph, the wiki vault and the raw archive.
-RUN mkdir -p /data/kuzudb /data/wiki /data/raw_vault /quarantine/slop \
+# Mount points for the compiled graph, the wiki vault, the raw archive and the
+# slop quarantine. These paths must match the bind-mount targets and the
+# entrypoint's DATA_DIRS list.
+RUN mkdir -p /data/kuzudb /data/wiki /data/raw_vault /data/quarantine /data/projects \
              /config/domain_schemas
 
 # Domain packs (Layer 3 governance) are baked in so the container works even
@@ -46,7 +48,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
 COPY backend/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN useradd --create-home --uid 10001 kuzuwiki \
-    && chown -R kuzuwiki:kuzuwiki /app /data /quarantine /config \
+    && chown -R kuzuwiki:kuzuwiki /app /data /config \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

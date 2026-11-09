@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import ipaddress
 import logging
+import re
 import socket
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from kuzuwiki.agents.orchestrator import Orchestrator
@@ -32,9 +36,9 @@ class IngestResponse(BaseModel):
 
 
 async def get_orchestrator() -> Orchestrator:
-    from kuzuwiki.main import app
+    from kuzuwiki.project_context import get_current_runtime
 
-    return app.state.orchestrator
+    return (await get_current_runtime()).orchestrator
 
 
 def _derive_domain(url: str | None) -> str | None:
@@ -108,9 +112,9 @@ def _extract_text(content_bytes: bytes, content_type: str | None) -> str:
 @router.get("/documents")
 async def list_documents(limit: int = 50) -> dict[str, Any]:
     """List ingested source documents - the immutable vault index."""
-    from kuzuwiki.main import app
+    from kuzuwiki.project_context import get_current_runtime
 
-    kuzu = app.state.kuzu
+    kuzu = (await get_current_runtime()).kuzu
     rows = await kuzu.read(
         "MATCH (s:SourceDoc) "
         "RETURN s.sha256 AS sha256, s.title AS title, s.domain AS domain, "
@@ -128,6 +132,26 @@ async def list_documents(limit: int = 50) -> dict[str, Any]:
                 document[field] = value.isoformat()
         documents.append(document)
     return {"documents": documents, "count": len(documents)}
+
+
+@router.get("/documents/{doc_sha256}/content", response_class=PlainTextResponse)
+async def read_document_content(doc_sha256: str) -> PlainTextResponse:
+    """Read the extracted text for one content-addressed source in this project."""
+    if not re.fullmatch(r"[a-fA-F0-9]{64}", doc_sha256):
+        raise HTTPException(400, "Invalid source document hash")
+
+    from kuzuwiki.project_context import get_current_runtime
+
+    runtime = await get_current_runtime()
+    archive = Path(runtime.orchestrator.gatekeeper.raw_vault) / f"{doc_sha256.lower()}.txt"
+    if not archive.is_file():
+        raise HTTPException(404, "Extracted source text was not found")
+    try:
+        content = await asyncio.to_thread(archive.read_text, encoding="utf-8")
+    except OSError as exc:
+        logger.exception("Could not read archived source text %s", doc_sha256)
+        raise HTTPException(500, "Could not read archived source text") from exc
+    return PlainTextResponse(content)
 
 
 @router.post("/document", response_model=IngestResponse)
@@ -148,7 +172,9 @@ async def ingest_document(
         content_bytes = await file.read()
         if len(content_bytes) > MAX_UPLOAD_BYTES:
             raise HTTPException(413, "Upload exceeds the 25 MB limit")
-        content = _extract_text(content_bytes, file.content_type)
+        # PDF parsing can take seconds on a large report. Keep the ASGI event
+        # loop available so other requests and the workbench stay responsive.
+        content = await asyncio.to_thread(_extract_text, content_bytes, file.content_type)
     elif url:
         _assert_public_url(url)
         try:

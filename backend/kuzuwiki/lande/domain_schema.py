@@ -145,3 +145,26 @@ def default_stopwords() -> set[str]:
     for schema in schemas.values():
         merged |= schema.stopword_set()
     return merged
+
+
+def stopwords_for(domain: str | None) -> set[str]:
+    """Stopwords for a specific analysis domain.
+
+    Merging every pack's stopwords would apply one domain's vocabulary to
+    another - the drone pack's terms have no business in a corporate
+    investigation. A named domain therefore gets *only* its own stopwords.
+    """
+    if not domain:
+        return default_stopwords()
+    schema = load_schema(domain)
+    if schema is None:
+        logger.warning("Unknown analysis domain %r; using the merged stopword set", domain)
+        return default_stopwords()
+    return schema.stopword_set()
+
+
+def schema_for(domain: str | None) -> DomainSchema | None:
+    """The domain pack for an analysis domain, or ``None``."""
+    if not domain:
+        return None
+    return load_schema(domain)

@@ -1,0 +1,145 @@
+# Open-source OSINT domain pack (Berlin 2026 corpus)
+#
+# Covers the vocabulary of the osint_berlin26 corpus: Russian-German labour
+# recruitment, corporate networks, sabotage/hybrid activity, and the
+# infrastructure and communication channels around them.
+version: "1.0"
+domain: "osint_berlin26"
+
+# Lande stopword filters - English analyst prose plus the recurring
+# filler of OSINT reports (confidence hedges, report furniture).
+lande_stopwords:
+  - "the"
+  - "a"
+  - "an"
+  - "and"
+  - "or"
+  - "but"
+  - "in"
+  - "on"
+  - "at"
+  - "to"
+  - "for"
+  - "of"
+  - "with"
+  - "by"
+  - "from"
+  - "as"
+  - "is"
+  - "are"
+  - "was"
+  - "were"
+  - "be"
+  - "been"
+  - "being"
+  - "this"
+  - "that"
+  - "these"
+  - "those"
+  - "there"
+  - "here"
+  - "report"
+  - "finding"
+  - "findings"
+  - "assessment"
+  - "analysis"
+  - "confidence"
+  - "likely"
+  - "possible"
+  - "potential"
+  - "medium"
+  - "high"
+  - "low"
+  - "risk"
+  - "source"
+  - "sources"
+  - "information"
+  - "evidence"
+  - "however"
+  - "therefore"
+  - "furthermore"
+  - "although"
+  - "which"
+  - "while"
+  - "where"
+  - "when"
+  - "what"
+  - "who"
+  - "how"
+  - "summary"
+  - "overview"
+  - "table"
+  - "figure"
+  - "note"
+
+entity_types:
+  - Person
+  - Organization
+  - Location
+  - Event
+  - NarrativeFrame
+  - Group
+  - PoliticalParty
+  - Infrastructure
+  - ServiceProvider
+  - TelegramChannel
+  - Website
+  - PhoneNumber
+  - EmailAddress
+  - RiskIndicator
+  - JobType
+  - LegalDocument
+  - FinancialIdentifier
+  - MilitarySystem
+  - Component
+
+# Edge topology. The corpus vocabulary (ceo_founder, payment_processor,
+# subsidiary_of, possible_false_flag, ...) is mapped onto these by the
+# structured importer, which also stores the original type verbatim.
+edge_types:
+  - OWNS_CONTROLS
+  - SUPPLIES_COMPONENT
+  - MANUFACTURES
+  - FUNDS
+  - AFFILIATED_WITH
+  - AMPLIFIES_NARRATIVE
+  - CONTRADICTS_CLAIM
+  - PARTICIPATED_IN
+  - SANCTIONED_UNDER
+  - HIERARCHY_PARENT_OF
+  - LOCATED_IN
+  - OPERATES_FROM
+  - RECRUITS_FROM
+  - ATTACKED
+  - COMMUNICATES_WITH
+
+osint_templates:
+  - name: "telegram_channel"
+    query: '"{entity_name}" site:t.me'
+    description: "Find the Telegram channel for a recruitment or narrative actor"
+  - name: "german_company_registry"
+    query: '"{entity_name}" Handelsregister Bundesanzeiger'
+    description: "Confirm registration, officers and registered address"
+  - name: "russian_legal_entity"
+    query: '"{entity_name}" ООО ИП ЕГРЮЛ'
+    description: "Trace the Russian legal entity behind a brand"
+  - name: "sanctions_screening"
+    query: '"{entity_name}" sanctions list OFAC EU UK HMT'
+    description: "Screen against consolidated sanctions lists"
+  - name: "beneficial_ownership"
+    query: '"{entity_name}" beneficial owner Gesellschafter'
+    description: "Unroll the ownership chain behind a German entity"
+  - name: "infrastructure_geoint"
+    query: '"{entity_name}" Umspannwerk Trafostation Netzbetreiber'
+    description: "Locate energy and utility infrastructure"
+  - name: "recruitment_channel"
+    query: '"{entity_name}" Telegram Arbeitgeber Baustelle Berlin'
+    description: "Find labour recruitment channels serving a target"
+  - name: "media_traffic"
+    query: '"{entity_name}" deutschsprachig Agentur Pressemitteilung'
+    description: "Trace who amplifies a narrative in German media"
+
+attack_index:
+  wave_threshold_sigma: 2.5
+  reprint_threshold: 0.85
+  emotional_intensity_threshold: 0.6

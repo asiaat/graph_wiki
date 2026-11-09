@@ -9,7 +9,6 @@ from kuzuwiki.agents.wiki_compiler import GraphWikiCompilerAgent
 from kuzuwiki.db.kuzu_client import KuzuClient
 from kuzuwiki.db.wiki_sync import WikiSync
 from kuzuwiki.jev.schemas import RawDocumentPayload
-from kuzuwiki.lande.hvg_network import compute_hvg
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +60,14 @@ class Orchestrator:
 
         # Step 2: Swarm extraction (if document accepted)
         try:
-            hvg_result = compute_hvg(payload.content or "")
             bundle = await self.swarm.extract(
                 document_text=payload.content or "",
                 doc_sha256=gatekeeper_result.doc_sha256,
                 hvg_hub_terms=gatekeeper_result.hub_terms,
                 slop_metrics=gatekeeper_result.slop_metrics,
-                hvg_result=hvg_result,
+                # Gatekeeper already computes the domain-aware HVG for hub
+                # terms; reuse it here instead of repeating the full graph pass.
+                hvg_result=getattr(gatekeeper_result, "hvg_result", None),
             )
             state["distillation_bundle"] = bundle
         except Exception as exc:

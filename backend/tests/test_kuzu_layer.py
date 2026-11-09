@@ -39,6 +39,31 @@ async def test_ensure_schema_is_idempotent(client: KuzuClient):
     assert status["tables_missing"] == []
 
 
+async def test_ensure_schema_adds_sensitivity_to_legacy_tables(client: KuzuClient):
+    """Existing databases predate the sensitivity fields in these tables."""
+    for table in ("SourceDoc", "Entity", "Claim"):
+        await client.write(f"CREATE NODE TABLE {table} (id STRING, PRIMARY KEY(id))")
+
+    result = await ensure_schema(client)
+
+    assert set(result["migrated_columns"]) == {
+        "SourceDoc.sensitivity",
+        "Entity.sensitivity",
+        "Claim.sensitivity",
+    }
+    for table in ("SourceDoc", "Entity", "Claim"):
+        columns = await client.read(f'CALL table_info("{table}") RETURN *')
+        assert "sensitivity" in {row["name"] for row in columns}
+
+
+async def test_ensure_schema_reports_no_migrations_on_current_schema(client: KuzuClient):
+    await ensure_schema(client)
+
+    result = await ensure_schema(client)
+
+    assert result["migrated_columns"] == []
+
+
 async def test_declared_tables_all_exist(client: KuzuClient):
     await ensure_schema(client)
     live = await client.table_names()

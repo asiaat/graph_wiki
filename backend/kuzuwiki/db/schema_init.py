@@ -46,6 +46,9 @@ NODE_TABLES: list[tuple[str, str]] = [
             primary_term STRING,
             is_quarantined BOOLEAN,
             quarantined_reason STRING,
+            source_type STRING,
+            analysis_domain STRING,
+            sensitivity STRING,
             PRIMARY KEY (sha256)
         )
         """,
@@ -65,6 +68,7 @@ NODE_TABLES: list[tuple[str, str]] = [
             confidence_score DOUBLE,
             lifecycle_state STRING,
             hvg_centrality DOUBLE,
+            sensitivity STRING,
             embedding DOUBLE[1024],
             updated_at TIMESTAMP,
             PRIMARY KEY (id)
@@ -84,6 +88,7 @@ NODE_TABLES: list[tuple[str, str]] = [
             nli_entailment DOUBLE,
             swarm_votes INT64,
             status STRING,
+            sensitivity STRING,
             embedding DOUBLE[1024],
             PRIMARY KEY (claim_id)
         )
@@ -199,6 +204,7 @@ REL_TABLES: list[tuple[str, str]] = [
         CREATE REL TABLE IF NOT EXISTS RELATES_TO (
             FROM Entity TO Entity,
             relation_type STRING,
+            original_type STRING,
             weight DOUBLE,
             valid_from TIMESTAMP,
             valid_to TIMESTAMP,
@@ -252,6 +258,15 @@ REL_TABLES: list[tuple[str, str]] = [
         """,
     ),
     (
+        "MENTIONED_IN",
+        """
+        CREATE REL TABLE IF NOT EXISTS MENTIONED_IN (
+            FROM Entity TO SourceDoc,
+            reference STRING
+        )
+        """,
+    ),
+    (
         "TERMS_RELATE_TO",
         """
         CREATE REL TABLE IF NOT EXISTS TERMS_RELATE_TO (
@@ -289,6 +304,14 @@ REL_TABLES: list[tuple[str, str]] = [
         )
         """,
     ),
+    (
+        "SYNTHESIS_FOR",
+        """
+        CREATE REL TABLE IF NOT EXISTS SYNTHESIS_FOR (
+            FROM Entity TO Concept
+        )
+        """,
+    ),
 ]
 
 
@@ -303,6 +326,15 @@ VECTOR_INDEXES: list[tuple[str, str, str]] = [
     ("entity_embedding_hnsw", "Entity", "embedding"),
     ("claim_embedding_hnsw", "Claim", "embedding"),
 ]
+
+# Properties added after the first on-disk schema shipped. ``CREATE TABLE IF
+# NOT EXISTS`` does not update an existing Kùzu table, so keep additive changes
+# explicit and idempotent here.
+ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("SourceDoc", "sensitivity", "STRING"),
+    ("Entity", "sensitivity", "STRING"),
+    ("Claim", "sensitivity", "STRING"),
+)
 
 
 async def _load_extension(client: KuzuClient, extension: str) -> bool:
@@ -334,6 +366,7 @@ async def ensure_schema(client: KuzuClient) -> dict[str, list[str]]:
     """Create every table and index the system needs. Safe to call repeatedly."""
     created_tables: list[str] = []
     created_indexes: list[str] = []
+    migrated_columns: list[str] = []
 
     for name, ddl in NODE_TABLES + REL_TABLES:
         try:
@@ -342,6 +375,14 @@ async def ensure_schema(client: KuzuClient) -> dict[str, list[str]]:
         except Exception as exc:
             logger.error("Failed to create table %s: %s", name, exc)
             raise
+
+    for table, column, column_type in ADDITIVE_COLUMNS:
+        table_info = await client.read(f'CALL table_info("{table}") RETURN *')
+        existing_columns = {str(row.get("name")) for row in table_info}
+        if column in existing_columns:
+            continue
+        await client.write(f"ALTER TABLE {table} ADD {column} {column_type}")
+        migrated_columns.append(f"{table}.{column}")
 
     existing = await _existing_indexes(client)
 
@@ -368,9 +409,16 @@ async def ensure_schema(client: KuzuClient) -> dict[str, list[str]]:
                 logger.warning("Could not create vector index %s: %s", index_name, exc)
 
     logger.info(
-        "Kùzu schema ensured: %d tables, %d indexes", len(created_tables), len(created_indexes)
+        "Kùzu schema ensured: %d tables, %d indexes, %d migrated columns",
+        len(created_tables),
+        len(created_indexes),
+        len(migrated_columns),
     )
-    return {"tables": created_tables, "indexes": created_indexes}
+    return {
+        "tables": created_tables,
+        "indexes": created_indexes,
+        "migrated_columns": migrated_columns,
+    }
 
 
 async def schema_status(client: KuzuClient) -> dict[str, Any]:

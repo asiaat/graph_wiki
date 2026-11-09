@@ -9,42 +9,47 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
-from kuzuwiki.agents.orchestrator import Orchestrator
 from kuzuwiki.api.routes_graph import router as graph_router
 from kuzuwiki.api.routes_ingest import router as ingest_router
 from kuzuwiki.api.routes_osint import router as osint_router
+from kuzuwiki.api.routes_projects import router as projects_router
+from kuzuwiki.api.routes_query import router as query_router
+from kuzuwiki.api.routes_stats import router as stats_router
 from kuzuwiki.api.routes_wiki import router as wiki_router
 from kuzuwiki.config import settings
-from kuzuwiki.db.kuzu_client import KuzuClient
-from kuzuwiki.db.schema_init import ensure_schema
-from kuzuwiki.db.wiki_sync import WikiSync
+from kuzuwiki.project_context import reset_current_project, set_current_project
+from kuzuwiki.projects import ProjectRuntimeManager, ProjectStore
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    kuzu = await KuzuClient.init(settings.kuzu_db_path)
-    app.state.kuzu = kuzu
-    logger.info("KùzuDB connection established")
+    store = ProjectStore(f"{settings.project_data_root}/projects.sqlite3")
+    manager = ProjectRuntimeManager(store)
+    app.state.project_store = store
+    app.state.project_manager = manager
+    default_runtime = await manager.get("default")
+    app.state.kuzu = default_runtime.kuzu
+    app.state.wiki_sync = default_runtime.wiki_sync
+    app.state.orchestrator = default_runtime.orchestrator
+    logger.info("Default project graph, orchestrator, and wiki vault wired")
 
-    schema = await ensure_schema(kuzu)
-    logger.info("KùzuDB schema ready: %s", schema)
+    # Warm the embedding client if available (non-blocking; logs warning if unavailable)
+    try:
+        from kuzuwiki.jev.embedding import get_embedding_client
 
-    app.state.wiki_sync = WikiSync(kuzu, settings.wiki_vault_path)
-    app.state.orchestrator = Orchestrator(
-        kuzu,
-        wiki_vault_path=settings.wiki_vault_path,
-        raw_vault_path=settings.raw_vault_path,
-        quarantine_path=settings.quarantine_path,
-    )
-    logger.info("Orchestrator and WikiSync wired")
+        client = get_embedding_client()
+        if client is not None:
+            logger.info("Embedding model loaded: %s", client.model_name)
+    except Exception as exc:
+        logger.debug("Embedding model not available: %s", exc)
 
     try:
         yield
     finally:
-        await kuzu.close()
-        logger.info("KùzuDB connection closed")
+        await manager.close()
+        logger.info("Project KùzuDB connections closed")
 
 
 app = FastAPI(
@@ -62,12 +67,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def select_project(request: Request, call_next):
+    """Bind every API request to one known project before route execution."""
+    if not request.url.path.startswith("/api/v1/"):
+        return await call_next(request)
+    project_id = (
+        request.headers.get("x-project-id")
+        or request.query_params.get("project_id")
+        or "default"
+    )
+    store = getattr(request.app.state, "project_store", None)
+    is_project_management = request.url.path.startswith("/api/v1/projects")
+    if store is not None and not is_project_management and store.get_project(project_id) is None:
+        return JSONResponse(status_code=404, content={"detail": "Project not found"})
+    token = set_current_project(project_id)
+    try:
+        return await call_next(request)
+    finally:
+        reset_current_project(token)
+
 # Router prefixes are declared on the routers themselves so that a route and
 # its public path can never drift apart.
 app.include_router(ingest_router)
 app.include_router(graph_router)
+app.include_router(query_router)
+app.include_router(stats_router)
 app.include_router(wiki_router)
 app.include_router(osint_router)
+app.include_router(projects_router)
 
 
 @app.exception_handler(Exception)

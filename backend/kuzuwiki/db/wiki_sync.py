@@ -20,7 +20,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Optional
 
 import yaml
 
@@ -40,6 +40,8 @@ ENTITY_COLUMNS = (
     "e.confidence_score AS confidence_score",
     "e.lifecycle_state AS lifecycle_state",
     "e.hvg_centrality AS hvg_centrality",
+    "e.sensitivity AS sensitivity",
+    "e.embedding AS embedding",
     "e.updated_at AS updated_at",
 )
 
@@ -166,6 +168,13 @@ class WikiSync:
         for row in entities:
             entity = dict(row)
             entity["external_ids"] = _coerce_external_ids(entity.get("external_ids"))
+            # Convert embedding from KùzuDB's list format to a plain list
+            if "embedding" in entity and entity["embedding"] is not None:
+                emb = entity["embedding"]
+                if hasattr(emb, "tolist"):
+                    entity["embedding"] = emb.tolist()
+                elif hasattr(emb, "__iter__") and not isinstance(emb, str):
+                    entity["embedding"] = list(emb)
             await self._attach_provenance(entity)
             document = await self._entity_document(entity)
             entity["wiki_markdown"] = document
@@ -251,9 +260,17 @@ class WikiSync:
         try:
             relations = await self.kuzu.read(
                 """
-                MATCH (a:Entity {id: $id})-[r:RELATES_TO]->(b:Entity)
-                RETURN b.canonical_name AS target, b.slug AS target_slug,
-                       r.relation_type AS relation_type, r.weight AS weight
+                MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity)
+                WHERE a.id = $id OR b.id = $id
+                OPTIONAL MATCH (c:Claim {claim_id: r.claim_id})
+                OPTIONAL MATCH (c)-[ev:EVIDENCED_BY]->(s:SourceDoc)
+                RETURN a.id AS source_id, a.canonical_name AS source,
+                       a.slug AS source_slug, b.id AS target_id,
+                       b.canonical_name AS target, b.slug AS target_slug,
+                       r.relation_type AS relation_type, r.weight AS weight,
+                       r.is_disputed AS is_disputed, r.claim_id AS claim_id,
+                       c.statement AS claim_statement,
+                       ev.exact_quote AS quote, s.sha256 AS source_sha256
                 """,
                 {"id": entity_id},
             )
@@ -261,13 +278,64 @@ class WikiSync:
             logger.warning("Could not load relations for %s: %s", entity_id, exc)
             relations = []
 
+        try:
+            contradiction_rows = await self.kuzu.read(
+                "MATCH (a:Claim)-[:CONTRADICTS]->(b:Claim) "
+                "RETURN a.claim_id AS claim_a, b.claim_id AS claim_b"
+            )
+            contradicted_claim_ids = {
+                claim_id
+                for row in contradiction_rows
+                for claim_id in (row.get("claim_a"), row.get("claim_b"))
+                if claim_id
+            }
+        except Exception as exc:
+            logger.warning("Could not load contradiction links for %s: %s", entity_id, exc)
+            contradicted_claim_ids = set()
+
+        deduplicated_relations: dict[tuple[str, str, str], dict] = {}
+        for relation in relations:
+            key = (
+                str(relation.get("source_id", "")),
+                str(relation.get("target_id", "")),
+                str(relation.get("relation_type", "")),
+            )
+            entry = deduplicated_relations.setdefault(
+                key,
+                {**relation, "evidence": []},
+            )
+            if relation.get("quote") and relation.get("source_sha256"):
+                evidence = {
+                    "quote": relation["quote"],
+                    "source_sha256": relation["source_sha256"],
+                }
+                if evidence not in entry["evidence"]:
+                    entry["evidence"].append(evidence)
+        relations = list(deduplicated_relations.values())
+
         if relations:
             lines += ["## Relations", ""]
             for rel in relations:
+                source = rel.get("source", "")
                 target = rel.get("target", "")
-                slug = rel.get("target_slug")
-                link = f"[[{slug}|{target}]]" if slug else target
-                lines.append(f"- **{rel.get('relation_type')}** -> {link}")
+                source_slug = rel.get("source_slug")
+                target_slug = rel.get("target_slug")
+                source_link = f"[[{source_slug}|{source}]]" if source_slug else source
+                target_link = f"[[{target_slug}|{target}]]" if target_slug else target
+                weight = rel.get("weight")
+                weight_text = f" (weight {float(weight):.2f})" if weight is not None else ""
+                is_disputed = rel.get("is_disputed") or rel.get("claim_id") in contradicted_claim_ids
+                disputed_text = " — disputed" if is_disputed else ""
+                lines.append(
+                    f"- {source_link} — **{rel.get('relation_type')}** → "
+                    f"{target_link}{weight_text}{disputed_text}"
+                )
+                expected_statement = f"{source} {rel.get('relation_type')} {target}"
+                if rel.get("claim_statement") and rel.get("claim_statement") != expected_statement:
+                    lines.append(f"  Claim: {rel['claim_statement']}")
+                for evidence in rel["evidence"]:
+                    lines.append(f"  > {evidence['quote']}")
+                    lines.append(f"  Source SHA-256: `{evidence['source_sha256']}`")
             lines.append("")
 
         return "\n".join(lines)
@@ -282,8 +350,22 @@ class WikiSync:
         entity.setdefault("wiki_markdown", "")
         entity.setdefault("aliases", [])
         entity.setdefault("external_ids", {})
+        entity.setdefault("embedding", None)
         entity["external_ids_json"] = json.dumps(entity["external_ids"], sort_keys=True)
         entity["updated_at"] = _utcnow()
+
+        # Prepare embedding - KùzuDB HNSW index requires non-null values.
+        # Always provide a list; zero-vectors default to [0.0]*1024.
+        embedding = entity.get("embedding")
+        if embedding is None:
+            embedding = [0.0] * 1024
+        elif isinstance(embedding, list):
+            if len(embedding) < 1024:
+                embedding = embedding + [0.0] * (1024 - len(embedding))
+            elif len(embedding) > 1024:
+                embedding = embedding[:1024]
+        else:
+            embedding = [0.0] * 1024
 
         await self.kuzu.write(
             """
@@ -299,6 +381,7 @@ class WikiSync:
                 e.confidence_score = $confidence_score,
                 e.lifecycle_state = $lifecycle_state,
                 e.hvg_centrality = $hvg_centrality,
+                e.sensitivity = $sensitivity,
                 e.updated_at = $updated_at
             ON MATCH SET
                 e.slug = $slug,
@@ -311,6 +394,7 @@ class WikiSync:
                 e.confidence_score = $confidence_score,
                 e.lifecycle_state = $lifecycle_state,
                 e.hvg_centrality = $hvg_centrality,
+                e.sensitivity = $sensitivity,
                 e.updated_at = $updated_at
             """,
             {
@@ -325,6 +409,7 @@ class WikiSync:
                 "confidence_score": entity.get("confidence_score", 0.5),
                 "lifecycle_state": entity.get("lifecycle_state", "UNVERIFIED"),
                 "hvg_centrality": entity.get("hvg_centrality", 0.0),
+                "sensitivity": entity.get("sensitivity", "public"),
                 "updated_at": entity["updated_at"],
             },
         )

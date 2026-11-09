@@ -397,20 +397,33 @@ this is the current state.
   edges), persisted Ebbinghaus decay, Attack-Index wave anomalies, and
   `ComplicationTicket`s for structural gaps.
 
-### 12.3 Specified but not implemented
+### 12.3 Current gaps and limits
 
-* `POST /api/v1/query/compiled` — hybrid GraphRAG over the compiled graph.
-* `WS /ws` — live graph mutation stream (the frontend hook degrades to a
-  no-op and reports `connected: false`).
-* Celery worker (`backend/app/agents/worker.py`) and beat schedule.
-* SearXNG deployment (the agent can use an external instance via
-  `SEARXNG_URL`, but no configuration ships with the repo).
-* Entity embeddings (the `Entity.embedding` column and its HNSW index exist;
-  nothing writes vectors yet, so the vector path of entity resolution is
-  inert until an embedding model is configured).
-* `DerivedSynthesis` filing from analyst queries is stored, but the
-  `PUT /api/v1/wiki/{slug}` route returns a payload the frontend does not yet
-  send as JSON.
+* `POST /api/v1/query/compiled` is now available through the workbench's Ask
+  Graph view. It keyword-ranks graph claims and returns only claims with
+  confidence ≥ 0.70, NLI entailment ≥ 0.85, and a quote linked to a source
+  document, provided the claim has no unresolved contradiction. It does not
+  generate free-form answers or yet traverse multi-hop paths. If no claim qualifies, it returns
+  `INSUFFICIENT_VERIFIED_EVIDENCE` and creates an `OSINTGapTicket`.
+* Query gap tickets can be listed and reviewed through `/api/v1/osint/gap-tickets`.
+* The graph canvas shows a directed, labeled neighbourhood with a readable
+  relation list; selecting a relation opens its claim and source quotation.
+  Entity dossiers show incoming and outgoing relations with source quotations,
+  and internal `[[wikilinks]]` navigate between dossiers in the workbench.
+* `WS /ws` remains a heartbeat placeholder; graph mutation events are not
+  streamed.
+* A Celery worker module and beat schedule exist, but Compose does not start
+  them. Redis is not part of the development stack, and the worker currently
+  opens its own embedded KùzuDB connection. Safe deployment requires a
+  single-writer design before enabling it beside the API.
+* SearXNG deployment is not included; the agent can use an external instance
+  through `SEARXNG_URL`.
+* Entity embeddings are optional and depend on the embedding package/model.
+  Keyword query works without embeddings; semantic vector retrieval remains a
+  separate follow-up.
+* The wiki `PUT` route and frontend save payload still need an end-to-end
+  contract review. Ask Graph can save qualifying query findings as a synthesis
+  concept when the analyst opts in.
 
 ### 12.4 Package layout
 

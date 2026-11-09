@@ -16,6 +16,7 @@ Order of operations:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from datetime import datetime, timezone
@@ -36,7 +37,8 @@ from kuzuwiki.jev.slop_classifier import (
     metrics_to_attack_index,
     should_quarantine_slop,
 )
-from kuzuwiki.lande.hvg_network import compute_hvg
+from kuzuwiki.lande.domain_schema import stopwords_for
+from kuzuwiki.lande.hvg_network import HVGResult, compute_hvg
 from kuzuwiki.lande.reprint_cascade import detect_reprint
 
 logger = logging.getLogger(__name__)
@@ -79,6 +81,7 @@ class GatekeeperResult(BaseModel):
     quarantine_reason: str | None = None
     doc_sha256: str
     hub_terms: list[str]
+    hvg_result: HVGResult | None = None
     #: Attack-Index vector - carried into the JEV bundle. This field is what
     #: the orchestrator hands to the swarm extractor.
     slop_metrics: JEVAttackIndexMetrics | None = None
@@ -131,7 +134,12 @@ class GatekeeperSlopAgent:
 
         # 3. Admiralty classification of the source.
         corroborations = await self._count_corroborations(payload.domain)
-        assessment = classify_source(content, payload.domain, corroborations)
+        assessment = classify_source(
+            content,
+            payload.domain,
+            corroborations,
+            source_type=payload.source_type,
+        )
         admiralty = assessment.reliability
         credibility_rank = assessment.credibility_rank
 
@@ -142,8 +150,11 @@ class GatekeeperSlopAgent:
         quarantined = should_quarantine_slop(slop_score, domain_mode)
         quarantine_reason = f"Slop score {slop_score:.2f} > 0.65" if quarantined else None
 
-        # 5. Lande HVG hub terms.
-        hvg_result = compute_hvg(content)
+        # 5. Lande HVG hub terms. The analysis domain decides which stopword
+        #    list applies - one domain's vocabulary must not leak into another.
+        hvg_result = await asyncio.to_thread(
+            compute_hvg, content, stopwords=stopwords_for(payload.analysis_domain)
+        )
         hub_terms = hvg_result.hub_terms
 
         # 6. Reprint detection - the *content* must be supplied, otherwise every
@@ -199,7 +210,10 @@ class GatekeeperSlopAgent:
                 s.raw_archive_path = $archive_path,
                 s.primary_term = $primary_term,
                 s.is_quarantined = $is_quarantined,
-                s.quarantined_reason = $quarantine_reason
+                s.quarantined_reason = $quarantine_reason,
+                s.source_type = $source_type,
+                s.analysis_domain = $analysis_domain,
+                s.sensitivity = $sensitivity
             """,
             {
                 "sha256": doc_sha256,
@@ -216,6 +230,9 @@ class GatekeeperSlopAgent:
                 "primary_term": hub_terms[0] if hub_terms else "",
                 "is_quarantined": quarantined,
                 "quarantine_reason": quarantine_reason,
+                "source_type": payload.source_type.value,
+                "analysis_domain": payload.analysis_domain or "",
+                "sensitivity": payload.sensitivity.value,
             },
         )
 
@@ -233,6 +250,7 @@ class GatekeeperSlopAgent:
             quarantine_reason=quarantine_reason,
             doc_sha256=doc_sha256,
             hub_terms=hub_terms,
+            hvg_result=hvg_result,
             slop_metrics=slop_metrics,
             is_reprint=is_reprint,
             reprint_of=reprint_sha,

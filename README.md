@@ -92,14 +92,39 @@ the **as-built** contract; `GET /openapi.json` is always authoritative.
   Gatekeeper → Lande HVG → JEV Swarm → Graph-Wiki Compiler
 - `GET /api/v1/ingest/documents` — Index of the immutable raw vault
 
+### Projects
+- `GET /api/v1/projects` — List projects and their saved dashboard layouts
+- `POST /api/v1/projects` — Create an isolated project workspace
+- `PUT /api/v1/projects/{project_id}/dashboard` — Save that project's dashboard panel layout
+- `GET /api/v1/projects/{project_id}/entities` — List entities for cross-project linking
+- `GET|POST /api/v1/projects/{project_id}/links` — List or create analyst references between project entities
+- `DELETE /api/v1/projects/{project_id}/links/{link_id}` — Remove a cross-project reference
+
+Graph, wiki, ingestion, OSINT, and statistics API requests accept an
+`X-Project-ID` header. The `default` project continues to use the existing
+KùzuDB and vault paths. New projects get separate KùzuDB, wiki, raw-vault, and
+quarantine directories under `PROJECT_DATA_ROOT` (default `/data/projects`).
+The workbench offers a project switcher and a dashboard editor for adding,
+removing, reordering, and resizing chart panels; layouts are saved per project.
+The Knowledge Workspace can ingest a PDF, DOCX, TXT, HTML, Markdown, or CSV
+file (up to 25 MB), or fetch a public HTTP(S) URL into the selected project.
+Cross-project links are stored as analyst references in the project registry;
+they preserve separate graphs and do not count as verified relations.
+
 ### Graph
 - `GET /api/v1/graph/entities` — Compiled entity list (ontology picker)
 - `GET /api/v1/graph/entities/count` — Compiled entity count
 - `GET /api/v1/graph/entity/{entity_id}` — One entity with its relations
-- `POST /api/v1/graph/subgraph` — k-hop neighbourhood for the graph canvas
+- `GET /api/v1/graph/wiki-map` — All compiled wiki dossiers and their directed, evidence-backed relations
+- `POST /api/v1/graph/subgraph` — k-hop neighbourhood with directed relations and source evidence
 - `POST /api/v1/graph/shortest-path` — Bounded shortest path between two entities
 - `POST /api/v1/graph/clusters` — Connected communities of the relation graph
 - `GET /api/v1/graph/terms` — The Lande term hierarchy (`DomainTerm` + `TERM_DOMINATES`)
+
+### Query
+- `POST /api/v1/query/compiled` — Keyword-ranked graph claims filtered to confidence ≥ 0.70,
+  entailment ≥ 0.85, no unresolved contradiction, and source-backed verbatim evidence. Returns
+  `INSUFFICIENT_VERIFIED_EVIDENCE` and opens an OSINT gap ticket when no claim qualifies.
 
 ### Wiki
 - `GET /api/v1/wiki/{slug}` — A compiled dossier by slug
@@ -112,13 +137,23 @@ the **as-built** contract; `GET /openapi.json` is always authoritative.
 - `GET /api/v1/osint/lint/contradictions` — Contradiction, decay, wave and gap report
 - `GET /api/v1/osint/tickets` — Open OSINT complication tickets
 - `POST /api/v1/osint/tickets/review` — Swarm Mentor decision (approve/reject/defer)
+- `GET /api/v1/osint/gap-tickets` — Query-time evidence gaps
+- `POST /api/v1/osint/gap-tickets/review` — Review a query-time evidence gap
 
 ### System
 - `GET /health` — Liveness probe
 
-**Not yet implemented** (specified in `PRD.md`, see `ARCHIT.md` §12):
-`POST /api/v1/query/compiled` (hybrid GraphRAG) and the `WS /ws` live-graph
-WebSocket endpoint.
+The query endpoint is a conservative graph lookup, not a generative GraphRAG
+answerer. The `WS /ws` endpoint is still a heartbeat placeholder; live graph
+mutation events are not implemented.
+
+The Wiki Graph view maps all compiled dossiers as nodes. Selecting a node opens
+its wiki page; selecting an arrow shows the relation, claim, and source quote.
+The Neighborhood view focuses on one entity and nearby relations. Use **Full
+screen** to expand the active wiki, graph, or query view; press Escape to return.
+Wiki dossiers also list incoming and outgoing links with evidence.
+The **Attack Index** header link opens a chart view at `/#attack-index`; the
+`/api/v1/osint/attack-index` URL remains the raw JSON API.
 
 ## User Interface
 
@@ -126,7 +161,7 @@ The frontend is an analyst-grade workbench combining:
 
 1. **Tri-Pane Knowledge Workbench:**
    - Left Pane: Domain Ontology Tree, Immutable Source Vault, Live Autonomous Agent Queue
-   - Center Pane: Synchronized Dual-View (Compiled Wiki Article + Interactive KùzuDB Graph Canvas)
+   - Center Pane: Compiled Wiki, whole-wiki graph, entity neighborhood, and evidence-gated graph query views
    - Right Pane: JEV Verification Inspector & Mentor Console
 
 2. **InfoStream / Attack-Index Temporal Ribbon**
@@ -190,7 +225,18 @@ npm run dev      # http://localhost:5173, proxies /api to :8000
 ```bash
 cd backend && python -m pytest     # 90+ tests, no API key required
 cd frontend && npm run typecheck
+python -m pip install -e 'backend[smoke]'
+python -m playwright install chromium
+python scripts/smoke_test.py        # browser check against Compose at :3000
 ```
+
+Run the browser smoke test for every delivery. It checks that the workbench and
+first dossier render without JavaScript errors, the wiki graph API returns
+nodes and relations, full-screen mode toggles, and the Attack-Index chart view
+renders. It also opens and exits a dashboard chart frame and both workspace
+panes in fullscreen. Set
+`SMOKE_BASE_URL` to test a different frontend URL or
+`SMOKE_CHROMIUM_EXECUTABLE` to use a system Chromium binary.
 
 The backend test suite mocks the LLM, so it runs fully offline and
 deterministically. The KùzuDB layer, the entailment gate, the domain packs and

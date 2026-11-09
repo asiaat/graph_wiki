@@ -109,6 +109,54 @@ def test_domain_schemas_are_mounted_into_the_backend():
     assert "./config/domain_schemas:/config/domain_schemas" in compose
 
 
+def test_no_service_is_published_on_all_interfaces():
+    """The stack must never be reachable from the public internet.
+
+    The API has no authentication of its own: it accepts document uploads
+    that spend the OpenRouter quota and serves the ingested vault and wiki.
+    The host nginx is the only public entry point and applies TLS + basic
+    auth, so every published port has to stay on loopback.
+    """
+    import re
+
+    repo_root = Path(__file__).resolve().parents[2]
+    compose = (repo_root / "docker-compose.yml").read_text(encoding="utf-8")
+
+    published = re.findall(r'-\s*"([0-9.]+:[0-9]+:[0-9]+)"', compose)
+    assert published, "no published ports found - the regex may be stale"
+    for mapping in published:
+        host_ip = mapping.split(":")[0]
+        assert host_ip == "127.0.0.1", (
+            f"port mapping {mapping!r} is published on all interfaces; "
+            "bind it to 127.0.0.1 and let the host nginx terminate TLS"
+        )
+
+    # A bare "8000:8000" would also be caught by the assertion above, but
+    # check explicitly for the shorthand form so the failure message is clear.
+    assert not re.search(r'-\s*"[0-9]+:[0-9]+"', compose), (
+        "a port is published without a host binding"
+    )
+
+
+def test_quarantine_path_agrees_with_the_mount():
+    """The entrypoint chowns the mount points; they must be the same paths."""
+    repo_root = Path(__file__).resolve().parents[2]
+    compose = (repo_root / "docker-compose.yml").read_text(encoding="utf-8")
+    entrypoint = (repo_root / "backend" / "docker-entrypoint.sh").read_text(encoding="utf-8")
+
+    mount = re.search(r"(\./data/quarantine):(\S+)", compose)
+    assert mount, "the quarantine volume is not mounted"
+    container_path = mount.group(2)
+
+    assert f"QUARANTINE_PATH: {container_path}" in compose, (
+        "QUARANTINE_PATH does not match the bind-mount target"
+    )
+    assert container_path in entrypoint, (
+        f"the entrypoint does not chown {container_path}, so the app user "
+        "cannot write the quarantine"
+    )
+
+
 def test_dockerignore_excludes_the_env_file():
     repo_root = Path(__file__).resolve().parents[2]
     dockerignore = (repo_root / ".dockerignore").read_text(encoding="utf-8")

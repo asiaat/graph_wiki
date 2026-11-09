@@ -26,9 +26,9 @@ class TicketReview(BaseModel):
 
 
 async def get_kuzu():
-    from kuzuwiki.main import app
+    from kuzuwiki.project_context import get_current_runtime
 
-    return app.state.kuzu
+    return (await get_current_runtime()).kuzu
 
 
 @router.post("/complicate/{entity_id}")
@@ -140,6 +140,51 @@ async def list_tickets(status: str | None = None) -> dict[str, Any]:
             ticket["created_at"] = ticket["created_at"].isoformat()
         tickets.append(ticket)
     return {"tickets": tickets, "count": len(tickets)}
+
+
+@router.get("/gap-tickets")
+async def list_gap_tickets(status: str | None = None) -> dict[str, Any]:
+    """List query-time OSINT gaps created by the verified-evidence gate."""
+    kuzu = await get_kuzu()
+    if status:
+        rows = await kuzu.read(
+            "MATCH (t:OSINTGapTicket) WHERE t.status = $status "
+            "RETURN t.ticket_id AS ticket_id, t.target_entity_id AS target_entity_id, "
+            "t.gap_description AS gap_description, t.required_evidence AS required_evidence, "
+            "t.confidence_threshold AS confidence_threshold, t.status AS status, "
+            "t.created_at AS created_at",
+            {"status": status},
+        )
+    else:
+        rows = await kuzu.read(
+            "MATCH (t:OSINTGapTicket) "
+            "RETURN t.ticket_id AS ticket_id, t.target_entity_id AS target_entity_id, "
+            "t.gap_description AS gap_description, t.required_evidence AS required_evidence, "
+            "t.confidence_threshold AS confidence_threshold, t.status AS status, "
+            "t.created_at AS created_at"
+        )
+    tickets = []
+    for row in rows:
+        ticket = dict(row)
+        if ticket.get("created_at") and hasattr(ticket["created_at"], "isoformat"):
+            ticket["created_at"] = ticket["created_at"].isoformat()
+        tickets.append(ticket)
+    return {"tickets": tickets, "count": len(tickets)}
+
+
+@router.post("/gap-tickets/review")
+async def review_gap_ticket(review: TicketReview) -> dict[str, Any]:
+    """Resolve a query-time evidence gap through the mentor queue."""
+    action = review.action.lower()
+    if action not in ("approve", "reject", "defer"):
+        raise HTTPException(400, "action must be approve, reject or defer")
+    status = {"approve": "APPROVED", "reject": "REJECTED", "defer": "DEFERRED"}[action]
+    kuzu = await get_kuzu()
+    await kuzu.write(
+        "MATCH (t:OSINTGapTicket {ticket_id: $ticket_id}) SET t.status = $status",
+        {"ticket_id": review.ticket_id, "status": status},
+    )
+    return {"ticket_id": review.ticket_id, "status": status, "notes": review.notes}
 
 
 @router.post("/tickets/review")

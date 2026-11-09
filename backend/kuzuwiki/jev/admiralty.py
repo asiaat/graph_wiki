@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from kuzuwiki.jev.schemas import AdmiraltyReliability
+from kuzuwiki.jev.schemas import AdmiraltyReliability, SourceType
 from kuzuwiki.jev.textutil import sentence_split
 
 #: (domain suffix or exact domain) -> reliability class
@@ -120,6 +120,43 @@ _ATTRIBUTION_RE = re.compile(
 _NUMBER_RE = re.compile(r"\b\d+(?:[.,]\d+)?\b")
 
 
+def _classify_by_type(
+    source_type: SourceType,
+) -> tuple[AdmiraltyReliability, int, str] | None:
+    """Baseline rating for a source whose type is known.
+
+    Returns ``None`` for ``WEB_ARTICLE``, which is judged from its domain and
+    its content instead.
+    """
+    if source_type == SourceType.ANALYST_REPORT:
+        # First-party analyst work: method and evidence are visible, but it is
+        # an assessment rather than a primary record.
+        return (
+            AdmiraltyReliability.C,
+            3,
+            "first-party analyst assessment (source_type=analyst_report)",
+        )
+    if source_type == SourceType.OFFICIAL_RECORD:
+        return (
+            AdmiraltyReliability.A,
+            3,
+            "official record (source_type=official_record)",
+        )
+    if source_type == SourceType.MEDIA:
+        return (
+            AdmiraltyReliability.B,
+            4,
+            "media report (source_type=media)",
+        )
+    if source_type == SourceType.INTELLIGENCE:
+        return (
+            AdmiraltyReliability.B,
+            3,
+            "intelligence product (source_type=intelligence)",
+        )
+    return None
+
+
 @dataclass(frozen=True)
 class AdmiraltyAssessment:
     reliability: AdmiraltyReliability
@@ -165,9 +202,26 @@ def classify_source(
     text: str,
     domain: str | None = None,
     corroborations: int = 0,
+    source_type: str = SourceType.WEB_ARTICLE,
 ) -> AdmiraltyAssessment:
     """Assign an Admiralty rating to a source document."""
     domain = domain or ""
+    source_type = SourceType(source_type) if source_type else SourceType.WEB_ARTICLE
+
+    # A typed source is judged on its type first: an analyst assessment has no
+    # publisher and no web domain, so the domain-prior path would rate it
+    # "cannot be judged" - which is wrong.
+    typed = _classify_by_type(source_type)
+    if typed is not None:
+        reliability, rank, rationale = typed
+        if corroborations >= 2:
+            rank = 1
+        elif corroborations == 1:
+            rank = min(rank, 2)
+        return AdmiraltyAssessment(
+            reliability=reliability, credibility_rank=rank, rationale=rationale
+        )
+
     prior = _domain_match(domain)
     sentences = sentence_split(text or "")
 

@@ -22,9 +22,25 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from kuzuwiki.jev.schemas import JEVExtractedEntity
+from kuzuwiki.jev.schemas import (
+    EntityCategory,
+    JEVExtractedEntity,
+    Sensitivity,
+    default_sensitivity_for,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def entity_id(category: EntityCategory | str, canonical_name: str) -> str:
+    """The canonical, deterministic id of an entity.
+
+    Both the resolver and the structured corpus importer must agree on this,
+    otherwise the same person becomes two nodes.
+    """
+    cat = category.value if isinstance(category, EntityCategory) else str(category)
+    name = re.sub(r"[^a-z0-9]+", "-", canonical_name.lower()).strip("-")[:64]
+    return f"{cat.lower()}:{name}"
 
 
 class EntityResolutionResult(BaseModel):
@@ -38,6 +54,8 @@ class EntityResolutionResult(BaseModel):
     summary_fact: str = ""
     confidence: float = 0.5
     match_strategy: str = "new"
+    #: Sharing restriction, derived from the category unless set explicitly.
+    sensitivity: Sensitivity = Sensitivity.PUBLIC
 
 
 def _jaro_winkler(s1: str, s2: str) -> float:
@@ -216,6 +234,7 @@ class EntityResolver:
             summary_fact=new_entity.summary_fact,
             confidence=new_entity.confidence,
             match_strategy="new",
+            sensitivity=new_entity.sensitivity or default_sensitivity_for(new_entity.category),
         )
 
     @staticmethod
@@ -237,6 +256,17 @@ class EntityResolver:
         summary = existing_summary or new_entity.summary_fact
         existing_conf = float(existing.get("confidence_score", 0.0) or 0.0)
 
+        # An existing entity keeps the stricter of the two restrictions.
+        existing_sensitivity = existing.get("sensitivity")
+        try:
+            existing_sensitivity = Sensitivity(existing_sensitivity)
+        except (ValueError, TypeError):
+            existing_sensitivity = None
+        derived = new_entity.sensitivity or default_sensitivity_for(new_entity.category)
+        if existing_sensitivity is not None:
+            order = [Sensitivity.PUBLIC, Sensitivity.SENSITIVE, Sensitivity.RESTRICTED]
+            derived = max(existing_sensitivity, derived, key=order.index)
+
         return EntityResolutionResult(
             resolved_id=existing["id"],
             canonical_name=existing.get("canonical_name", new_entity.canonical_name),
@@ -248,11 +278,10 @@ class EntityResolver:
             summary_fact=summary,
             confidence=max(existing_conf, new_entity.confidence),
             match_strategy=strategy,
+            sensitivity=derived,
         )
 
     @staticmethod
     def _generate_id(entity: JEVExtractedEntity) -> str:
         """Generate a deterministic slug from entity attributes."""
-        cat = entity.category.value.lower()
-        name = re.sub(r"[^a-z0-9]+", "-", entity.canonical_name.lower()).strip("-")[:64]
-        return f"{cat}:{name}"
+        return entity_id(entity.category, entity.canonical_name)

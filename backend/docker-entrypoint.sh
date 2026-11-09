@@ -8,7 +8,10 @@
 
 set -e
 
-DATA_DIRS="/data/kuzudb /data/wiki /data/raw_vault /quarantine/slop"
+# These must match the bind-mount targets in docker-compose.yml exactly.
+# Getting this wrong leaves the app user unable to write the directory, which
+# silently breaks quarantine (the Gatekeeper cannot file a slop document).
+DATA_DIRS="/data/kuzudb /data/wiki /data/raw_vault /data/quarantine /data/projects"
 
 for dir in $DATA_DIRS; do
     mkdir -p "$dir" 2>/dev/null || true

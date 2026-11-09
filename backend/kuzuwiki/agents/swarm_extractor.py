@@ -29,6 +29,7 @@ from typing import Any
 import httpx
 
 from kuzuwiki.config import settings
+from kuzuwiki.jev.chunking import DEFAULT_MAX_CHARS, chunk_document
 from kuzuwiki.jev.nli_verifier import NLI_THRESHOLD, NLIClient, verify_quotebound
 from kuzuwiki.jev.schemas import (
     JEVAttackIndexMetrics,
@@ -164,24 +165,33 @@ class SwarmExtractor:
         slop_metrics: JEVAttackIndexMetrics,
         hvg_result: HVGResult | None = None,
         min_consensus_weight: float = 0.5,
+        max_chunk_chars: int = DEFAULT_MAX_CHARS,
     ) -> JEVDistillationBundle:
-        """Run the expert swarm in parallel and aggregate weighted consensus."""
-        raw_text = document_text[:10000]  # Cap for model context
+        """Run the expert swarm in parallel and aggregate weighted consensus.
 
-        results = await asyncio.gather(
-            *(self._run_expert(expert, raw_text) for expert in EXPERTS),
-            return_exceptions=True,
-        )
+        Long documents are split into chunks and every chunk is put to all
+        three experts. The entailment gate always runs against the *whole*
+        document, so a quote that straddles a chunk boundary still verifies.
+        """
+        chunks = chunk_document(document_text, max_chars=max_chunk_chars)
 
-        expert_outputs: list[dict[str, Any]] = []
+        #: (expert, payload) pairs - the expert identity is needed to count
+        #: votes per persona rather than per occurrence.
+        expert_payloads: list[tuple[Expert, dict[str, Any]]] = []
         failures: list[str] = []
-        for expert, outcome in zip(EXPERTS, results, strict=False):
-            if isinstance(outcome, Exception):
-                failures.append(f"{expert.key}: {outcome}")
-                continue
-            expert_outputs.append(outcome)
 
-        if not expert_outputs:
+        for chunk in chunks:
+            results = await asyncio.gather(
+                *(self._run_expert(expert, chunk.text) for expert in EXPERTS),
+                return_exceptions=True,
+            )
+            for expert, outcome in zip(EXPERTS, results, strict=False):
+                if isinstance(outcome, Exception):
+                    failures.append(f"{expert.key} (chunk {chunk.index}): {outcome}")
+                    continue
+                expert_payloads.append((expert, outcome))
+
+        if not expert_payloads:
             raise SwarmExtractionError(
                 "Every virtual expert failed; the distillation would be empty. "
                 + "; ".join(failures)
@@ -189,12 +199,12 @@ class SwarmExtractor:
         if failures:
             logger.warning("Swarm degraded - %s", "; ".join(failures))
 
-        all_entities = [e for out in expert_outputs for e in out["entities"]]
-        all_relations = [r for out in expert_outputs for r in out["relations"]]
+        all_entities = [e for _, payload in expert_payloads for e in payload["entities"]]
+        all_relations = [r for _, payload in expert_payloads for r in payload["relations"]]
 
         consensus_entities = self._consensus_entities(all_entities)
         consensus_relations = self._consensus_relations(
-            all_relations, document_text, min_consensus_weight
+            all_relations, document_text, min_consensus_weight, expert_payloads
         )
 
         return JEVDistillationBundle(
@@ -313,31 +323,68 @@ class SwarmExtractor:
         all_relations: list[dict[str, Any]],
         document_text: str,
         min_consensus_weight: float = 0.5,
+        expert_payloads: list[tuple[Expert, dict[str, Any]]] | None = None,
     ) -> list[JEVExtractedRelation]:
-        """Aggregate relations, apply the weighted consensus and the NLI gate."""
+        """Aggregate relations, apply the weighted consensus and the NLI gate.
+
+        Votes are counted **per persona**, not per occurrence: a relation that
+        one expert finds in three different chunks of the same document is one
+        expert's opinion, not three. Counting occurrences inflated the
+        consensus of long documents and let a single persona carry a claim.
+        """
         weights: dict[tuple[str, str, str], float] = {}
         votes: dict[tuple[str, str, str], int] = {}
         objects: dict[tuple[str, str, str], JEVExtractedRelation] = {}
         rejected = 0
 
-        for raw in all_relations:
-            key = (
-                str(raw.get("source_entity", "")).strip(),
-                str(raw.get("relation_type", "")).strip(),
-                str(raw.get("target_entity", "")).strip(),
-            )
-            if not all(key):
-                rejected += 1
-                continue
-            try:
-                relation = JEVExtractedRelation(**raw)
-            except Exception as exc:
-                logger.warning("Discarding malformed relation %r: %s", key, exc)
-                rejected += 1
-                continue
-            objects.setdefault(key, relation)
-            votes[key] = votes.get(key, 0) + 1
-            weights[key] = weights.get(key, 0.0) + self._expert_weight_for(raw)
+        # Which personas proposed each triple.
+        proposers: dict[tuple[str, str, str], set[str]] = {}
+
+        for expert, payload in expert_payloads or []:
+            for raw in payload.get("relations", []):
+                key = (
+                    str(raw.get("source_entity", "")).strip(),
+                    str(raw.get("relation_type", "")).strip(),
+                    str(raw.get("target_entity", "")).strip(),
+                )
+                if not all(key):
+                    continue
+                proposers.setdefault(key, set()).add(expert.key)
+                try:
+                    relation = JEVExtractedRelation(**raw)
+                except Exception as exc:
+                    logger.warning("Discarding malformed relation %r: %s", key, exc)
+                    rejected += 1
+                    continue
+                objects.setdefault(key, relation)
+
+        # Fall back to the flat list when no per-expert provenance is available.
+        if not proposers:
+            for raw in all_relations:
+                key = (
+                    str(raw.get("source_entity", "")).strip(),
+                    str(raw.get("relation_type", "")).strip(),
+                    str(raw.get("target_entity", "")).strip(),
+                )
+                if not all(key):
+                    rejected += 1
+                    continue
+                try:
+                    relation = JEVExtractedRelation(**raw)
+                except Exception as exc:
+                    logger.warning("Discarding malformed relation %r: %s", key, exc)
+                    rejected += 1
+                    continue
+                objects.setdefault(key, relation)
+                proposers.setdefault(key, set()).add("unknown")
+
+        expert_weight = {expert.key: expert.weight for expert in EXPERTS}
+        for key, relation in objects.items():
+            personas = proposers.get(key, set())
+            votes[key] = len(personas)
+            weights[key] = sum(expert_weight.get(persona, 0.5) for persona in personas) or 0.5
+            # A triple proposed by nobody carries no expertise bonus.
+            weights[key] *= self._type_expertise(relation.relation_type)
 
         accepted: list[JEVExtractedRelation] = []
         for key, vote_count in votes.items():
@@ -373,20 +420,19 @@ class SwarmExtractor:
                 continue
             accepted.append(relation)
 
+        if rejected:
+            logger.warning("%d extracted relation record(s) failed schema validation", rejected)
+
         return accepted
 
     @staticmethod
-    def _expert_weight_for(raw: dict[str, Any]) -> float:
-        """Weight a relation by the expertise of the persona that proposed it.
+    def _type_expertise(relation_type: RelationType) -> float:
+        """How much a persona's opinion on this relation type is worth.
 
         The persona is not transmitted over the wire, so the weight is derived
         from the relation type: relational types are Alpha/Beta's domain,
         narrative types are Gamma's.
         """
-        try:
-            relation_type = RelationType(str(raw.get("relation_type", "")))
-        except ValueError:
-            return 0.5
         narrative = {
             RelationType.AMPLIFIES_NARRATIVE,
             RelationType.CONTRADICTS_CLAIM,
@@ -416,11 +462,11 @@ class OpenRouterClient:
     ):
         self.api_key = api_key
         self.base_url = base_url
-        self.model = primary_model or "nvidia/nemotron-3-8b-32k-instruct:free"
+        self.model = primary_model or "nvidia/nemotron-3.5-lightning:free"
         self.fallback_models = fallback_models or [
-            "google/gemma-3-27b-it:free",
-            "google/flint-8b:free",
-            "minimax/minimax-01:free",
+            "recursive/flint-v1.0:free",
+            "google/gemma-4-26b-a4b-it:free",
+            "nvidia/nemotron-3.5-lightning:free",
         ]
 
     async def chat_completion(

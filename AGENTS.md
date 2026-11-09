@@ -213,3 +213,16 @@ class JEVDistillationBundle(BaseModel):
         ]
         return self
 ```
+
+## 4. Delivery Verification Gate
+
+Before reporting a change as delivered:
+
+1. Run `python3 scripts/smoke_test.py` against the target frontend. For the VPS
+   Compose deployment, the default target is `http://127.0.0.1:3000`.
+2. Run the relevant unit tests. For frontend changes, also run `npm run build`
+   and `npm run lint` from `frontend/`.
+3. If deployment is part of the delivery, rerun the smoke test after deployment
+   and confirm the Compose services are healthy.
+4. Report the actual commands and results. If an environment prevents a check,
+   state that clearly instead of marking it passed.

@@ -29,9 +29,9 @@ class SynthesisSave(BaseModel):
 
 
 async def get_wiki_sync():
-    from kuzuwiki.main import app
+    from kuzuwiki.project_context import get_current_runtime
 
-    return app.state.wiki_sync
+    return (await get_current_runtime()).wiki_sync
 
 
 def _split_frontmatter(content: str) -> tuple[dict[str, Any], str]:
@@ -132,6 +132,6 @@ async def _save_synthesis_node(slug: str, content: str) -> bool:
 
 
 async def get_kuzu_client():
-    from kuzuwiki.main import app
+    from kuzuwiki.project_context import get_current_runtime
 
-    return app.state.kuzu
+    return (await get_current_runtime()).kuzu
